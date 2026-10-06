@@ -103,11 +103,12 @@ func TestVisibleTreatsMalformedBodyAsUpstreamFailure(t *testing.T) {
 	}
 }
 
-// 未配置目录地址（base 为空）仍按"不可见"处理：这是拆分前的既有口径，
-// 不算上游故障——没配地址的部署本来就没有可见性判定能力。
-func TestVisibleWithoutBaseIsNotVisible(t *testing.T) {
-	_, err := New("").Visible(context.Background(), "66666666-6666-6666-6666-666666666666", "", "")
-	if !errors.Is(err, ErrNotVisible) {
-		t.Fatalf("未配置目录地址应按不可见处理，实际 err=%v", err)
+func TestVisibleWithoutBaseReportsDependencyFailure(t *testing.T) {
+	for _, base := range []string{"", " \t "} {
+		_, err := New(base).Visible(context.Background(), "66666666-6666-6666-6666-666666666666", "", "")
+		var upstreamErr *upstream.Error
+		if !errors.As(err, &upstreamErr) || upstreamErr.Reason != upstream.ReasonNotConfigured || errors.Is(err, ErrNotVisible) {
+			t.Fatalf("未配置目录地址应返回 not_configured 依赖错误，实际 err=%v", err)
+		}
 	}
 }

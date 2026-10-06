@@ -180,8 +180,13 @@ func TestMiddlewareResolvesPrincipalFromJWKS(t *testing.T) {
 func TestAuthBoundaryBeforeDatabase(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	verifier := newVerifier(t, "http://127.0.0.1:1/jwks")
+	cat := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "not_found"})
+	}))
+	defer cat.Close()
 	r := gin.New()
-	New(&store.Store{}, &objects.Store{}, catalog.New(""), verifier, config.Config{}).Register(r)
+	New(&store.Store{}, &objects.Store{}, catalog.New(cat.URL), verifier, config.Config{}).Register(r)
 
 	for _, tc := range []struct{ method, path string }{
 		{http.MethodPost, "/api/storage/upload/initiate"},
@@ -206,7 +211,7 @@ func TestAuthBoundaryBeforeDatabase(t *testing.T) {
 		t.Fatalf("verify-hash 空载荷应 400，实际 %d", w.Code)
 	}
 
-	// 目录地址为空时实体不可见：文件列表入口必须 404，且不查库、不泄露存在性。
+	// 目录明确回答不可见：文件列表入口必须 404，且不查库、不泄露存在性。
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/storage/entities/"+uuid.NewString()+"/files", nil))
 	if w.Code != 404 {

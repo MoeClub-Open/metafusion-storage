@@ -45,7 +45,7 @@ type Client struct {
 
 func New(base string) *Client {
 	return &Client{
-		base: strings.TrimRight(base, "/"),
+		base: strings.TrimRight(strings.TrimSpace(base), "/"),
 		up:   upstream.New(visiblePolicy()),
 	}
 }
@@ -67,10 +67,11 @@ func (c *Client) Visible(ctx context.Context, entityID, bearer, cookie string) (
 // IdentityResolution 是目录侧统一身份解析契约（X01）的本地投影：canonical_id 为存活身份，
 // aliases 为历史别名全集（GET /api/catalog/entities/{id}/identity，见目录
 // lifecycle.go 的 IdentityResolution）：正向链上经过的旧 ID + 存活身份的反向遍历全集，
-// 去重。读聚合按此集合展开（见 AliasSet）。
+// 去重。complete=true 才能按全集展开读聚合（见 AliasSet）。
 type IdentityResolution struct {
 	CanonicalID string   `json:"canonical_id"`
 	Aliases     []string `json:"aliases"`
+	Complete    bool     `json:"complete"`
 	Entity      struct {
 		ID   string `json:"id"`
 		Kind string `json:"kind"`
@@ -84,8 +85,11 @@ type IdentityResolution struct {
 // 其余错误表示问不到上游，调用方必须回 503 而不是空列表。
 func (c *Client) Identity(ctx context.Context, entityID, bearer, cookie string) (IdentityResolution, error) {
 	var zero IdentityResolution
-	if c.base == "" || entityID == "" {
+	if entityID == "" {
 		return zero, ErrNotVisible
+	}
+	if c.base == "" {
+		return zero, &upstream.Error{Upstream: "catalog", Reason: upstream.ReasonNotConfigured, Cause: errors.New("CATALOG_URL is required")}
 	}
 	header := http.Header{}
 	c.decorate(header, bearer, cookie)
@@ -106,6 +110,9 @@ func (c *Client) Identity(ctx context.Context, entityID, bearer, cookie string) 
 		}
 		if v.CanonicalID == "" || v.Entity.ID != v.CanonicalID || v.Entity.Kind == "" {
 			return zero, fmt.Errorf("catalog identity %s: 响应缺 canonical", entityID)
+		}
+		if !v.Complete {
+			return zero, &upstream.Error{Upstream: "catalog", Reason: upstream.ReasonBadResponse, Cause: errors.New("identity payload without complete alias set")}
 		}
 		return v, nil
 	case resp.StatusCode == http.StatusNotFound:

@@ -56,6 +56,22 @@ func TestEntityFilesReportsUpstreamUnavailable(t *testing.T) {
 			wantCode: http.StatusServiceUnavailable,
 			wantErr:  upstream.CodeUpstreamUnavailable,
 		},
+		{
+			name: "目录未确认别名全集",
+			catalog: func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(`{"canonical_id":"a","aliases":[],"entity":{"id":"a","kind":"work"}}`))
+			},
+			wantCode: http.StatusServiceUnavailable,
+			wantErr:  upstream.CodeUpstreamUnavailable,
+		},
+		{
+			name: "目录明确标记部分别名",
+			catalog: func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(`{"canonical_id":"a","aliases":[],"entity":{"id":"a","kind":"work"},"complete":false}`))
+			},
+			wantCode: http.StatusServiceUnavailable,
+			wantErr:  upstream.CodeUpstreamUnavailable,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -84,6 +100,23 @@ func TestEntityFilesReportsUpstreamUnavailable(t *testing.T) {
 				t.Fatalf("错误码 %q，期望 %q", got.Error, tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestEntityFilesRequiresConfiguredCatalog(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	New(&store.Store{}, &objects.Store{}, catalog.New(" \t "), newVerifier(t, "http://127.0.0.1:1/jwks"), config.Config{}).Register(r)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/storage/entities/"+uuid.NewString()+"/files", nil))
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("解析响应失败：%v", err)
+	}
+	if w.Code != http.StatusServiceUnavailable || payload.Error != upstream.CodeUpstreamUnavailable {
+		t.Fatalf("目录地址未配置必须回依赖错误：code=%d payload=%s", w.Code, w.Body.String())
 	}
 }
 

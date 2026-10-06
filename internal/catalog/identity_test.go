@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/MoeclubM/metafusion-storage/internal/upstream"
 )
 
 // X01 身份契约：identity 端点一次返回存活身份与历史别名（只读投影，不改写引用）。
@@ -31,7 +33,7 @@ func TestIdentityReturnsCanonicalAndAliases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Identity 失败: %v", err)
 	}
-	if v.CanonicalID != newID || v.Entity.Kind != "work" {
+	if v.CanonicalID != newID || v.Entity.Kind != "work" || !v.Complete {
 		t.Fatalf("存活身份不符: %+v", v)
 	}
 	if len(v.Aliases) != 1 || v.Aliases[0] != oldID {
@@ -74,7 +76,7 @@ func TestIdentityStillHidesUnresolvableEntity(t *testing.T) {
 	}
 }
 
-// AliasSet：{canonical + 全部请求 ID} 去重，空串丢弃（与互动侧同一兼容口径）。
+// AliasSet：{canonical + 全部请求 ID} 去重，空串丢弃（与互动侧同一契约）。
 func TestAliasSetDedups(t *testing.T) {
 	got := AliasSet("d", "a", "d", "", "b", "a")
 	want := []string{"a", "d", "b"}
@@ -88,6 +90,30 @@ func TestAliasSetDedups(t *testing.T) {
 	}
 	if got := AliasSet("d", "d"); len(got) != 1 || got[0] != "d" {
 		t.Fatalf("单 ID 应退化为自身：%v", got)
+	}
+}
+
+func TestIdentityRejectsIncompleteAliasSet(t *testing.T) {
+	for _, test := range []struct{ name, body string }{
+		{"missing completeness marker", `{"canonical_id":"d","aliases":["a"],"entity":{"id":"d","kind":"work"}}`},
+		{"partial alias set", `{"canonical_id":"d","aliases":["a"],"entity":{"id":"d","kind":"work"},"complete":false}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			hits := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hits++
+				_, _ = w.Write([]byte(test.body))
+			}))
+			defer server.Close()
+			v, err := New(server.URL).Identity(context.Background(), "a", "", "")
+			var upstreamErr *upstream.Error
+			if !errors.As(err, &upstreamErr) || upstreamErr.Reason != upstream.ReasonBadResponse || v.CanonicalID != "" {
+				t.Fatalf("前向或部分身份响应必须拒绝聚合：v=%+v err=%v", v, err)
+			}
+			if hits != 1 {
+				t.Fatalf("契约失败不得触发旧接口回退：hits=%d", hits)
+			}
+		})
 	}
 }
 

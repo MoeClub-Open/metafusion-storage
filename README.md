@@ -9,7 +9,7 @@ MetaFusion 物理资产归档与下载中枢：文件本体、内容寻址、直
 - **不拥有**：作品/专辑/曲目等目录数据（不复制、不 JOIN 目录库）、收录位置（页码/时间码属目录侧 `locator`）。
 - **依赖**：元数据目录服务（实体身份与可见性）、账号服务（令牌验签和 PAT 内省）。
 
-存储通过 `GET /api/catalog/entities/{id}/identity` 一次获得 canonical、kind 与完整历史别名。可见性、上传绑定和下载判定共用此协议；明确的 `404 not_found` 表示不可见，接口缺失、协议错误和上游不可用按依赖故障处理，不回退到旧实体/resolve 查询。实体合并不改写存储绑定，读取按别名集合聚合。
+存储通过 `GET /api/catalog/entities/{id}/identity` 一次获得 canonical、kind 与完整历史别名，响应必须确认 `complete=true`。可见性、上传绑定和下载判定共用此协议；明确的 `404 not_found` 表示不可见，接口缺失、协议错误和上游不可用按依赖故障处理，不回退到旧实体/resolve 查询。实体合并不改写存储绑定，读取按别名集合聚合。
 用户会话 JWT 在本地验签，PAT 通过 `AUTH_URL`（账号服务）内省；目录身份与账号身份分属各自服务。
 
 跨服务出站调用统一走 `internal/upstream`（超时分层 + 有界重试 + 熔断；执行器按调用点建一次、长期复用，
@@ -87,6 +87,7 @@ JWKS 拉取**刻意不走**这套执行器：公钥拉取自带 10 分钟缓存�
 **问不到目录服务 ≠ 不可见**：目录侧明确回答"不存在/不可见"仍是 `404 not_found`；而超时、连接失败、
 5xx 或熔断打开时，`/entities/{id}/files`、`/assets/{id}`（及其 content / download / verify-hash 的读取判定）
 回 `503` + `{"error":"upstream_unavailable"}`（机器码 `upstream.CodeUpstreamUnavailable`）。
+目录地址为空、身份响应缺少 `complete` 或标记 `complete=false` 时也返回同一依赖错误；部分历史别名不能作为全集使用。
 把两者折成一个结果，会让上游抖动表现成"这份文件不存在"——文件从实体列表里静默消失，用户与运维都看不出区别。
 
 ### 签名撤销窗口
