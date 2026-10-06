@@ -91,7 +91,11 @@ func newAuditHarnessWith(t *testing.T, withPAT bool) *auditHarness {
 
 	// 目录服务只被问可见性：所有实体都可见。
 	cat := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"id": "x", "kind": "track"})
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/catalog/entities/"), "/identity")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"canonical_id": id, "aliases": []string{}, "complete": true,
+			"entity": map[string]any{"id": id, "kind": "track"},
+		})
 	}))
 	t.Cleanup(cat.Close)
 

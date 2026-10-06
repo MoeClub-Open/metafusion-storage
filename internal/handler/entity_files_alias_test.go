@@ -75,18 +75,15 @@ func TestListEntityFilesAggregatesFullAliasSet(t *testing.T) {
 		p := r.URL.Path
 		entity := func(id string) map[string]any { return map[string]any{"id": id, "kind": "track"} }
 		for _, id := range []string{aID, bID, cID, dID} {
-			if p == "/api/catalog/entities/"+id {
-				_ = json.NewEncoder(w).Encode(entity(id))
-				return
-			}
 			if p == "/api/catalog/entities/"+id+"/identity" {
 				_ = json.NewEncoder(w).Encode(map[string]any{
-					"canonical_id": dID, "aliases": fullAliases, "entity": entity(dID),
+					"canonical_id": dID, "aliases": fullAliases, "entity": entity(dID), "complete": true,
 				})
 				return
 			}
 		}
 		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "not_found"})
 	}))
 	defer cat.Close()
 

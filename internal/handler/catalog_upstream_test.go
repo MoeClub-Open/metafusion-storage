@@ -137,7 +137,10 @@ func TestAssetReadReportsUpstreamUnavailable(t *testing.T) {
 		{
 			name: "绑定目标可见",
 			catalog: func(w http.ResponseWriter, r *http.Request) {
-				_ = json.NewEncoder(w).Encode(map[string]any{"id": entityID, "kind": "track"})
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"canonical_id": entityID, "aliases": []string{}, "complete": true,
+					"entity": map[string]any{"id": entityID, "kind": "track"},
+				})
 			},
 			wantCode: http.StatusOK,
 		},

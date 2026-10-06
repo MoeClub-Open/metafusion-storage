@@ -161,7 +161,7 @@ JWKS 拉取**刻意不走**这套执行器：公钥拉取自带 10 分钟缓存�
 | --- | --- | --- |
 | `PORT` | `8082` | 监听端口 |
 | `TRUSTED_PROXIES` | `127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` | 可信反向代理的 IP/CIDR 列表（逗号分隔）：只有对端落在列表里时 gin 才采信 `X-Forwarded-For`，否则 `ClientIP()` 回退 `RemoteAddr`。`none` 表示入口链上没有代理（服务被直接暴露）。非法项**拒绝启动**——静默退回"无可信代理"会让审计行的 `actor_ip` 全是网关容器地址、应用层限流退化成全站共享一个桶，而那种退化在功能上看不出异常 |
-| `DATABASE_URL` | 由 `DB_*` 拼装 | PostgreSQL 连接串（本服务只使用 `storage` schema） |
+| `DATABASE_URL` | **必填** | PostgreSQL 连接串，使用存储域独立数据库身份；为空即拒绝启动，不读取 `DB_*` |
 | `STORAGE_ROOT` | `./storage-data` | 本地对象模式根目录与直传暂存目录 |
 | `STORAGE_S3_ENDPOINT` | 空 | 为空即本地对象模式（无需 RustFS） |
 | `STORAGE_S3_PUBLIC_ENDPOINT` | 同内部端点 | 客户端直传使用的对外地址。SigV4 覆盖 Host，必须用浏览器可达的地址签发，否则反代后签名校验失败 |
@@ -245,8 +245,12 @@ go test -count=1 ./internal/handler/ ./internal/objects/   # 两种对象模式�
 
 ## 运行
 
+直接运行时设置 `DATABASE_URL`，使用主仓授权 SQL 中的 `mf_storage` 身份。数据库实例可共用，业务凭据按域隔离，存储服务仅拥有存储域及所需审计权限；授权规则见主仓 [database-roles.md](https://github.com/MoeclubM/MetaFusion/blob/main/docs/architecture/database-roles.md)。连接串中的密码须进行 URL 编码。
+
+独立 Compose 部署先将 `.env.example` 复制为 `.env`，设置 `STORAGE_DATABASE_URL`。编排将它注入容器的 `DATABASE_URL`。
+
 ```bash
-go run cmd/server/main.go          # 需要 DATABASE_URL 或 DB_* 指向 PostgreSQL
+go run cmd/server/main.go          # 需要 DATABASE_URL 指向 PostgreSQL
 go test ./... && go vet ./...
 ```
 

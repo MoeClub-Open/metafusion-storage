@@ -1,14 +1,13 @@
 package config
 
 import (
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// Config 是存储服务的运行配置，全部来自环境变量；缺失时回落到可用的开发默认值。
+// Config 是存储服务的运行配置，全部来自环境变量；数据库连接串必须显式配置。
 // 对象存储只读取 STORAGE_* 配置。
 type Config struct {
 	Port string
@@ -16,7 +15,7 @@ type Config struct {
 	// 只有对端落在列表里时 gin 才采信 X-Forwarded-For，否则 ClientIP() 回退 RemoteAddr；
 	// 留空表示用 internal/nettrust 的保守默认（回环 + RFC1918 私网），"none" 表示入口无代理。
 	TrustedProxies string
-	// DatabaseURL 为 PostgreSQL 连接串；为空时用 DB_* 拼装。
+	// DatabaseURL 为必填的 PostgreSQL 连接串，使用存储域独立数据库身份。
 	DatabaseURL string
 	// Root 本地对象模式的根目录（也用于上传暂存）。
 	Root string
@@ -121,25 +120,7 @@ func Load() Config {
 	if c.S3PublicEndpoint == "" {
 		c.S3PublicEndpoint = c.S3Endpoint
 	}
-	if c.DatabaseURL == "" {
-		c.DatabaseURL = buildDSN()
-	}
 	return c
-}
-
-// buildDSN 用 url.URL 拼连接串：口令里的 @ : / ? # 等字符必须转义，
-// 直接字符串拼接会在这些字符上拼出非法 DSN（或连错主机）。
-func buildDSN() string {
-	u := url.URL{
-		Scheme: "postgres",
-		Host:   env("DB_HOST", "localhost") + ":" + env("DB_PORT", "5432"),
-		Path:   env("DB_NAME", "metafusion_db"),
-		User:   url.UserPassword(env("DB_USER", "metafusion"), os.Getenv("DB_PASSWORD")),
-	}
-	q := u.Query()
-	q.Set("sslmode", env("DB_SSLMODE", "disable"))
-	u.RawQuery = q.Encode()
-	return u.String()
 }
 
 // UploadLease 是单次上传租约时长（Load 已收敛：未配置即跟随预签名有效期）。

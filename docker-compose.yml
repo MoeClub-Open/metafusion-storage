@@ -1,7 +1,7 @@
 version: '3.8'
 
 # 存储服务独立编排：只依赖 PostgreSQL（自有 storage schema）与对象存储。
-# 目标形态是各系统独立数据库或受限账号；这里默认共用实例、独立 schema。
+# 使用本域独立数据库身份；数据库实例可以与其他服务共用。
 services:
   storage:
     build: .
@@ -9,11 +9,7 @@ services:
     restart: unless-stopped
     environment:
       - PORT=8082
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_USER=${DB_USER:-metafusion}
-      - DB_PASSWORD=${DB_PASSWORD:?DB_PASSWORD must be set in .env}
-      - DB_NAME=${STORAGE_DB_NAME:-metafusion_db}
+      - DATABASE_URL=${STORAGE_DATABASE_URL:?STORAGE_DATABASE_URL must be set in .env}
       - STORAGE_ROOT=/app/storage-data
       - STORAGE_S3_ENDPOINT=${STORAGE_S3_ENDPOINT:-}
       - STORAGE_S3_PUBLIC_ENDPOINT=${STORAGE_S3_PUBLIC_ENDPOINT:-}

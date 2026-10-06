@@ -113,13 +113,16 @@ func newUploadHarnessWith(t *testing.T, useS3 bool, verifyMaxMB int) *uploadHarn
 	// 换了 h.visible 的用例按实体 id 得到 200 或 404（404 = 目录明确回答不可见，
 	// 与"问不到上游"区分开，后者由 catalog_upstream_test.go 覆盖）。
 	cat := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/catalog/entities/"), "/resolve")
-		id = strings.TrimSuffix(id, "/identity")
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/catalog/entities/"), "/identity")
 		if h.visible != nil && !h.visible(id) {
 			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "not_found"})
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "kind": "track"})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"canonical_id": id, "aliases": []string{}, "complete": true,
+			"entity": map[string]any{"id": id, "kind": "track"},
+		})
 	}))
 	t.Cleanup(cat.Close)
 

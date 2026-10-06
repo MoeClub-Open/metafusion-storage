@@ -21,6 +21,7 @@ func TestIdentityReturnsCanonicalAndAliases(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"canonical_id": newID,
 			"aliases":      []string{oldID},
+			"complete":     true,
 			"entity":       map[string]any{"id": newID, "kind": "work"},
 		})
 	}))

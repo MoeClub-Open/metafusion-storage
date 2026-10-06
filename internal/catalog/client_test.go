@@ -22,7 +22,7 @@ func TestVisibleFollowsMergedIdentity(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/catalog/entities/" + oldID + "/identity":
 			resolved = true
-			_ = json.NewEncoder(w).Encode(map[string]any{"canonical_id": newID, "aliases": []string{oldID}, "entity": map[string]any{"id": newID, "kind": "work"}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"canonical_id": newID, "aliases": []string{oldID}, "entity": map[string]any{"id": newID, "kind": "work"}, "complete": true})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

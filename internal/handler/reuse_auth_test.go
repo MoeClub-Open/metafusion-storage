@@ -77,17 +77,25 @@ func TestReuseRequiresReadabilityAndRebindPermission(t *testing.T) {
 
 	privateEntity, publicEntity, bobEntity := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	cat := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/catalog/entities/"), "/identity")
 		if strings.Contains(r.URL.Path, privateEntity) {
 			// 私有实体仅对 A 可见：B 与匿名一律按不存在处理，不泄露存在性。
 			if r.Header.Get("Authorization") != "Bearer "+aToken {
 				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "not_found"})
 				return
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": privateEntity, "kind": "track"})
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"canonical_id": privateEntity, "aliases": []string{}, "complete": true,
+				"entity": map[string]any{"id": privateEntity, "kind": "track"},
+			})
 			return
 		}
 		// 公开实体与 B 自己的目标实体对任何请求者可见。
-		_ = json.NewEncoder(w).Encode(map[string]any{"id": "x", "kind": "track"})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"canonical_id": id, "aliases": []string{}, "complete": true,
+			"entity": map[string]any{"id": id, "kind": "track"},
+		})
 	}))
 	t.Cleanup(cat.Close)
 

@@ -74,6 +74,9 @@ func upstreamReadyURL(base string) string {
 
 func main() {
 	cfg := config.Load()
+	if cfg.DatabaseURL == "" {
+		log.Fatal("DATABASE_URL is required: configure a dedicated storage database identity")
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

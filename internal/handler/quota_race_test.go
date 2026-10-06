@@ -85,7 +85,11 @@ func newQuotaHarness(t *testing.T, useS3 bool) *quotaHarness {
 		t.Fatalf("objects.New: %v", err)
 	}
 	cat := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"id": "x", "kind": "track"})
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/catalog/entities/"), "/identity")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"canonical_id": id, "aliases": []string{}, "complete": true,
+			"entity": map[string]any{"id": id, "kind": "track"},
+		})
 	}))
 	t.Cleanup(cat.Close)
 	gin.SetMode(gin.TestMode)
