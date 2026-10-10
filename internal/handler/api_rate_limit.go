@@ -57,7 +57,7 @@ func apiRateLimiter() gin.HandlerFunc {
 		c.Header("X-RateLimit-Reset", strconv.Itoa(reset))
 		if b.used > 180 {
 			c.Header("Retry-After", strconv.Itoa(reset))
-			c.AbortWithStatusJSON(429, gin.H{"error": "rate_limited"})
+			fail(c, 429, "rate_limited")
 			return
 		}
 		c.Next()
