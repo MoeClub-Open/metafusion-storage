@@ -59,6 +59,8 @@ func (h *Handler) Register(r *gin.Engine) {
 	// 把审计挪到任何路由级中间件之后都会让这类请求静默消失（见 audit_postgres_test.go 的
 	// TestAuditLogAgainstPostgresAuthRejectedWrites）。
 	api.Use(h.auditMiddleware())
+	api.Use(v.Middleware())
+	api.Use(apiRateLimiter())
 	{
 		api.POST("/upload/initiate", v.Required(), h.requireUpload(), h.initiateUpload)
 		api.POST("/upload/complete", v.Required(), h.requireUpload(), h.completeUpload)

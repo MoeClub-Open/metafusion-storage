@@ -334,3 +334,5 @@ STORAGE_TEST_DSN='postgres://…/metafusion_storage_test' go test ./...   # 追�
 - 主仓库的 `/api/archive/*`、`/api/playback/*`、`/api/media/*` **已退役**（网关不再为它们单列 location，相关实现与表已删除）；
   本服务的 `/api/storage/*` 是唯一契约，切流已完成，回退按网关前缀切换。
 - 异步转码/HLS/雪碧图投递、BT 种子与磁力链、分片续传的断点记录尚未实现（契约预留）。
+
+云端 MCP 通过现有 API 操作本服务；信息获取由 Agent 决定。业务读写默认各 180 RPM，验证 admin 组免业务限流，PAT 内省包含现时 groups，业务权限仍按 permissions 检查。连接池默认 32/16；计数为每进程固定窗口。

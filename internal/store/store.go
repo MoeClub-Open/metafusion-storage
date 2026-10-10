@@ -42,7 +42,7 @@ type Asset struct {
 	UploadExpiresAt *time.Time `json:"upload_expires_at,omitempty"`
 	// ReclaimToken/ReclaimClaimedAt 是清理认领的持有标记：空表示无人认领。
 	// 只允许认领持有者删行；续租/完成/绑定会清掉它（主动方胜出），超时未落定可被接管。
-	ReclaimToken    string     `json:"-"`
+	ReclaimToken     string     `json:"-"`
 	ReclaimClaimedAt *time.Time `json:"-"`
 	// Blocked 是独立于 status 的禁发标记：status 只回答"内容是否验过"，
 	// Blocked 只回答"是否允许分发"（目录公开 ≠ 文件可分发）。解禁后原状态仍在。
@@ -80,7 +80,8 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(10)
+	db.SetMaxOpenConns(32)
+	db.SetMaxIdleConns(16)
 	if err = db.PingContext(ctx); err != nil {
 		db.Close()
 		return nil, err
