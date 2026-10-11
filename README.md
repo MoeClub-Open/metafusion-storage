@@ -9,7 +9,7 @@ MetaFusion 物理资产归档与下载中枢：文件本体、内容寻址、直
 - **不拥有**：作品/专辑/曲目等目录数据（不复制、不 JOIN 目录库）、收录位置（页码/时间码属目录侧 `locator`）。
 - **依赖**：元数据目录服务（实体身份与可见性）、账号服务（令牌验签和 PAT 内省）。
 
-存储通过 `GET /api/catalog/entities/{id}/identity` 一次获得 canonical、kind 与完整历史别名，响应必须确认 `complete=true`。可见性、上传绑定和下载判定共用此协议；明确的 `404 not_found` 表示不可见，接口缺失、协议错误和上游不可用按依赖故障处理，不回退到旧实体/resolve 查询。实体合并不改写存储绑定，读取按别名集合聚合。
+存储通过 `GET /api/catalog/entities/{id}/identity` 一次获得 canonical、kind 与完整历史别名，响应必须确认 `complete=true`。可见性、上传绑定和下载判定共用此协议；明确的 `404 not_found` 表示不可见，接口缺失、协议错误和上游不可用按依赖故障处理，不回退到旧实体/resolve 查询。启用目录生命周期同步后，实体合并异步将全部用途的绑定迁移到规范身份并去重；读取仍按完整别名集合聚合。
 用户会话 JWT 在本地验签，PAT 通过 `AUTH_URL`（账号服务）内省；目录身份与账号身份分属各自服务。
 
 跨服务出站调用统一走 `internal/upstream`（超时分层 + 有界重试 + 熔断；执行器按调用点建一次、长期复用，
@@ -172,6 +172,7 @@ JWKS 拉取**刻意不走**这套执行器：公钥拉取自带 10 分钟缓存�
 | `AUTH_JWT_PUBLIC_KEY` | 空 | 静态公钥（PEM 或 base64 PEM）；设置后不再请求 JWKS |
 | `AUTH_JWT_ISSUER` / `AUTH_JWT_AUDIENCE` | `https://findverse.cc/api` / `metafusion` | 与主仓库保持一致，避免存量令牌失效 |
 | `CATALOG_URL` | `http://backend:8080` | 目录服务地址（可见性判定） |
+| `STORAGE_CATALOG_LIFECYCLE_SECRET` | 空 | 目录撤引用消费者的专用服务凭据；两侧配置相同值，空值关闭内部接口，不能使用用户 JWT/PAT 替代 |
 | `STORAGE_PRESIGN_TTL_MINUTES` | `120` | 预签名有效期；同时是上传租约的默认寿命（签发地址过期了租约也没意义） |
 | `STORAGE_MAX_PARTS` | `10000` | 单次上传最大分片数 |
 | `STORAGE_MAX_UPLOAD_MB` | `0` | 服务端接收路径的上限，`0` 为不限制（直传路径不受此限） |
@@ -182,6 +183,7 @@ JWKS 拉取**刻意不走**这套执行器：公钥拉取自带 10 分钟缓存�
 | `STORAGE_USER_QUOTA_MB` / `STORAGE_SITE_QUOTA_MB` | `0` | 容量预算（MB）：complete 计真实字节，pending 计声明大小；`0` 为不限制；超限 `initiate` 回 `413 quota_exceeded` |
 | `STORAGE_USER_CONCURRENT_UPLOADS` / `STORAGE_SITE_CONCURRENT_UPLOADS` | `0` | 并发预算（进行中的 pending 数）：`0` 为不限制；超限回 `429 too_many_uploads`；只拦新建占位，不拦续传收尾 |
 | `STORAGE_ORPHAN_RETENTION_DAYS` | `7` | 孤儿对象保留期（天）：无引用的键首次发现超过该天数才搬隔离区；隔离不等于删除 |
+| `STORAGE_UNBOUND_RETENTION_DAYS` | `7` | complete 资产最后解绑后的保留期（天）；重新绑定取消回收，从未绑定的资产在完成时开始计时 |
 | `STORAGE_S3_SKIP_BUCKET_ENSURE` | `false` | 置 `true` 跳过启动建桶检查，用仅目标桶数据操作的服务凭据（最小权限）；桶由运维身份事先建好 |
 
 服务**刻意不设** `ReadTimeout`/`WriteTimeout`：整盘镜像与视频的上传/下载都可能远超 30 秒，
@@ -261,18 +263,43 @@ go test ./... && go vet ./...
 ### 后台任务（上传回收与一致性核查）
 
 ```bash
-storage-server worker   # 跑一次就退出：过期上传回收 + 双向对账，由 cron/systemd timer 周期触发
+storage-server worker   # 跑一次就退出：过期上传/失绑资产回收 + 双向对账，由 cron/systemd timer 周期触发
 ```
 
 - **上传回收**：按 `upload_expires_at` 租约到期判断；迁移 `000005` 将存量无租约的 pending 行按历史默认 72 小时回填。
-  且无绑定的 `pending` 才进候选。处置前重查绑定（候选与删除之间可能有人刚绑上），
-  再做双向核对：对象键前缀必须与声明 sha 对上（对不上只上报不动手）；
-  仍有其它资产行引用同一键（秒传去重共享）时只删行、不删字节；独占且对象存在才删字节再删行。
+  无绑定且未禁发的 `pending` 才进候选。
+- **失绑资产回收**：无绑定且未禁发的 `complete` 从 `unbound_since` 起经过
+  `STORAGE_UNBOUND_RETENTION_DAYS` 才进候选。迁移 `000006` 将存量无绑定资产从迁移时刻开始计时；
+  完成时无绑定开始计时，最后解绑重新计时，重新绑定清空计时。数据库触发器覆盖批量撤引用。
+- **删除并发与重试**：两种回收都在对象键锁、资产行锁内复核资格及共享引用；对象键必须与声明 sha 对上。
+  删字节前持久登记 `reclaim_deleting`，之后绑定、续租及完成返回 `409 asset_reclaiming`。
+  仍有其它资产行引用同一键时只删行；独占对象操作限时 15 秒，在持锁期间删字节并删行。
+  对象操作失败、进程中断或删字节后数据库提交失败时保留删除门禁，下一次 worker 重试；不能把可能缺字节的行重新激活。
 - **一致性核查**：库→对象（`complete` 行是否真有字节；缺失的先禁发标记，不解绑不删行）与
   对象→库（无引用的键记 `storage.orphaned_objects` 台账，超过保留期搬 `quarantine/` 隔离，**不自动删字节**）
   双向进行。熔断：读错存在、或缺失多且占比过半（像整桶不可用）时只上报不标记。
-- 两条铁律：清理绝不动被绑定的资产；删字节前先隔离标记。"不知道"（读失败、键对不上、比例异常）
+  隔离前复检资产引用及对象搬运共用对象键锁，和新资产登记互斥；对象操作限时 15 秒，不能隔离刚被重新引用的字节。
+- 两条铁律：清理绝不动被绑定的资产；删字节前先持久登记删除阶段。"不知道"（读失败、键对不上、比例异常）
   一律只上报不动手。实现见 `internal/maintenance`，口径单测见 `policy_test.go`。
+
+### 目录绑定生命周期
+
+目录服务配置 `STORAGE_URL` 与 `STORAGE_CATALOG_LIFECYCLE_SECRET` 后，先从存储
+`GET /internal/catalog/binding-targets` 的 UUID 游标分页库存复核既有绑定，再消费
+`entity.saved/deleted/merged/unpublished` outbox；失败重试，存储成功回执后才写目录独立
+`storage-lifecycle-v1` delivery ACK。启用时目录的事件保留清理必须等该 ACK，写目录本身不等待存储 HTTP。
+长期关闭后重新启用也会重做库存复核，不能依赖历史 outbox 仍然存在。
+
+内部 `POST /internal/catalog/lifecycle` 只接受专用服务凭据，必须由网关拒绝外部 `/internal/`，
+空密钥不注册内部接口。目录发送当前 canonical、完整历史 aliases 及各自版本、图片资产集合；
+存储拒绝过时版本和缺失已知别名的旧快照。删除撤所有别名的绑定，合并迁移全部文件用途并去重，
+旧别名图片资产继续保留。下架回草稿保留文件；TrackContent 是 Expression 收录，修改不撤文件绑定。
+普通图片编辑只撤已移除的 `cover_image` 绑定，不影响原档、音频等其他用途，也不会自动创建缺少授权的资产绑定。
+
+上传/重绑先于图片 Save，迁移 `000008` 的 `confirmed_at` 为这种间隙提供保护：重复 Bind 保留原绑定 ID、
+创建者和创建时间，但刷新确认时间；旧目录快照只撤确认时间早于该次目录写入的封面。
+存量确认时间从迁移时刻保守起算，旧实体图片绑定在目录下一次新写入后才按新快照撤销。
+目录身份在读取与写绑定之间已合并/删除时，返回 `409 binding_target_changed`，调用方重新读取身份再写。
 
 ## 数据库结构与迁移
 

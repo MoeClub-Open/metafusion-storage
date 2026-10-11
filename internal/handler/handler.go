@@ -50,6 +50,7 @@ func New(db *store.Store, objs *objects.Store, cat *catalog.Client, verifier *au
 // Register 挂载契约路由。读接口允许匿名（可见性由目录实体决定）；
 // 创建/登记自己的资产要 storage.asset.upload，其余写接口只要求登录（见 requireUpload）。
 func (h *Handler) Register(r *gin.Engine) {
+	h.registerCatalogLifecycle(r)
 	v := h.verifier
 	api := r.Group("/api/storage")
 	// 审计中间件挂在 api 组上、在路由注册之前（契约 §3）：只有注册表里登记了动作码的写路由才留痕。
@@ -156,22 +157,27 @@ func (h *Handler) credentials(c *gin.Context) (string, string) {
 // 折在一起会让上游抖一下就等于"这个实体不存在"——文件从列表里静默消失，运维看不到故障。
 // 因此本函数负责写失败响应，调用方只需 if !ok { return }。
 func (h *Handler) visibleEntity(c *gin.Context, entityID string) (string, bool) {
+	_, kind, ok := h.canonicalEntity(c, entityID)
+	return kind, ok
+}
+
+func (h *Handler) canonicalEntity(c *gin.Context, entityID string) (string, string, bool) {
 	if _, err := uuid.Parse(entityID); err != nil {
 		fail(c, http.StatusNotFound, "not_found")
-		return "", false
+		return "", "", false
 	}
 	bearer, cookie := h.credentials(c)
-	kind, err := h.catalog.Visible(c.Request.Context(), entityID, bearer, cookie)
+	identity, err := h.catalog.Identity(c.Request.Context(), entityID, bearer, cookie)
 	if err == nil {
-		return kind, true
+		return identity.CanonicalID, identity.Entity.Kind, true
 	}
 	if errors.Is(err, catalog.ErrNotVisible) {
 		fail(c, http.StatusNotFound, "not_found")
-		return "", false
+		return "", "", false
 	}
 	h.log.Printf("storage: 实体 %s 可见性问不到目录服务，回 503 %s: %v", entityID, upstream.CodeUpstreamUnavailable, err)
 	fail(c, http.StatusServiceUnavailable, upstream.CodeUpstreamUnavailable)
-	return "", false
+	return "", "", false
 }
 
 func normalizeRole(role string) string {
@@ -239,11 +245,12 @@ func (h *Handler) initiateUpload(c *gin.Context) {
 	}
 	targetKind := ""
 	if in.TargetEntityID != "" {
-		kind, ok := h.visibleEntity(c, in.TargetEntityID)
+		canonical, kind, ok := h.canonicalEntity(c, in.TargetEntityID)
 		if !ok {
 			return
 		}
 		targetKind = kind
+		in.TargetEntityID = canonical
 		if in.TargetEntityType != "" && !strings.EqualFold(in.TargetEntityType, kind) {
 			// 类型以目录服务的权威值为准，声明不符直接拒绝，避免绑定写错维度。
 			fail(c, 400, "invalid_target_type")
@@ -273,6 +280,10 @@ func (h *Handler) initiateUpload(c *gin.Context) {
 		if h.denyUnreadable(c, asset) {
 			return
 		}
+		if err := h.db.CheckAssetActive(ctx, asset.ID); err != nil {
+			h.failStorageWrite(c, err)
+			return
+		}
 		if in.TargetEntityID != "" && !canManageAsset(p, asset.UploaderID) {
 			fail(c, 403, "forbidden")
 			return
@@ -282,7 +293,7 @@ func (h *Handler) initiateUpload(c *gin.Context) {
 		if in.TargetEntityID != "" {
 			b, berr := h.createBinding(ctx, asset.ID, in.TargetEntityID, targetKind, role, p.ID)
 			if berr != nil {
-				fail(c, 500, "module_error")
+				h.failStorageWrite(c, berr)
 				return
 			}
 			resp.Binding = &b
@@ -297,13 +308,22 @@ func (h *Handler) initiateUpload(c *gin.Context) {
 			fail(c, 409, "upload_in_progress")
 			return
 		}
+		// Renew before signing addresses: a durable deletion gate must not
+		// hand out new upload credentials for bytes already being reclaimed.
+		if err := h.db.SetUploadExpiry(ctx, asset.ID, time.Now().Add(h.cfg.UploadLease())); err != nil {
+			h.failStorageWrite(c, err)
+			return
+		}
 		resp, rerr := h.presign(ctx, asset, in.PartCount, false)
 		if rerr != nil {
+			if errors.Is(rerr, store.ErrAssetReclaiming) {
+				h.failStorageWrite(c, rerr)
+				return
+			}
 			fail(c, 503, "storage_unavailable")
 			return
 		}
 		// 续传即"我还活着"：刷新租约，避免传得慢的上传被清理任务收走。
-		_ = h.db.SetUploadExpiry(ctx, asset.ID, time.Now().Add(h.cfg.UploadLease()))
 		// 续传/覆盖他人未完成的上传是跨用户处置：摘要里点出这次到底是不是替别人收尾。
 		h.auditAsset(c, asset, map[string]any{"resumed": true, "part_count": in.PartCount, "cross_user": asset.UploaderID != p.ID})
 		c.JSON(200, resp)
@@ -354,7 +374,7 @@ func (h *Handler) initiateUpload(c *gin.Context) {
 	if in.TargetEntityID != "" {
 		b, berr := h.createBinding(ctx, asset.ID, in.TargetEntityID, targetKind, role, p.ID)
 		if berr != nil {
-			fail(c, 500, "module_error")
+			h.failStorageWrite(c, berr)
 			return
 		}
 		resp.Binding = &b
@@ -406,7 +426,7 @@ func (h *Handler) createBinding(ctx context.Context, assetID, entityID, kind, ro
 	if err := h.db.Bind(ctx, b); err != nil {
 		return store.Binding{}, err
 	}
-	return b, nil
+	return h.db.BindingByReference(ctx, assetID, entityID, role)
 }
 
 // canManageAsset 是纯函数：上传者本人，或持有 storage.asset.moderate 的审核者，
@@ -447,6 +467,10 @@ func (h *Handler) completeUpload(c *gin.Context) {
 	}
 	// 被动对象与"变更前"摘要在这一步就确定：回读不符、超限这些失败路径同样要能追到是哪份资产。
 	h.auditAsset(c, asset, nil)
+	if err := h.db.SetUploadExpiry(ctx, asset.ID, time.Now().Add(h.cfg.UploadLease())); err != nil {
+		h.failStorageWrite(c, err)
+		return
+	}
 	if asset.Status == "complete" {
 		h.auditAsset(c, asset, map[string]any{"already_complete": true})
 		c.JSON(200, gin.H{"asset": asset, "already_complete": true})
@@ -514,12 +538,12 @@ func (h *Handler) completeUpload(c *gin.Context) {
 		return
 	}
 	if err = h.db.MarkHashVerified(ctx, asset.ID, read); err != nil {
-		fail(c, 500, "module_error")
+		h.failStorageWrite(c, err)
 		return
 	}
 	if err = h.db.CompleteAsset(ctx, asset.ID, read); err != nil {
 		// 到这里 hash_verified 已经为真，ErrAssetUnverified 只会在数据被外部改坏时出现。
-		fail(c, 500, "module_error")
+		h.failStorageWrite(c, err)
 		return
 	}
 	before := asset.Status
@@ -571,6 +595,10 @@ func (h *Handler) streamUpload(c *gin.Context) {
 		return
 	}
 	h.auditAsset(c, asset, nil)
+	if err := h.db.SetUploadExpiry(ctx, asset.ID, time.Now().Add(h.cfg.UploadLease())); err != nil {
+		h.failStorageWrite(c, err)
+		return
+	}
 	// 单列一档上限而不是复用 JSON 写接口的 2MB：这里收到的是原始文件字节，
 	// 大小由 STORAGE_MAX_UPLOAD_MB（默认 0 = 不限制，大文件优先）决定，
 	// 声明的大小在 initiate 与落定阶段另有校验。网关的 client_max_body_size 是 1G，
@@ -609,11 +637,11 @@ func (h *Handler) streamUpload(c *gin.Context) {
 		}
 	}
 	if err := h.db.MarkHashVerified(ctx, asset.ID, size); err != nil {
-		fail(c, 500, "module_error")
+		h.failStorageWrite(c, err)
 		return
 	}
 	if err := h.db.CompleteAsset(ctx, asset.ID, size); err != nil {
-		fail(c, 500, "module_error")
+		h.failStorageWrite(c, err)
 		return
 	}
 	before := asset.Status
@@ -663,7 +691,7 @@ func (h *Handler) bind(c *gin.Context) {
 		return
 	}
 	h.auditAsset(c, asset, nil)
-	kind, ok := h.visibleEntity(c, in.TargetEntityID)
+	canonical, kind, ok := h.canonicalEntity(c, in.TargetEntityID)
 	if !ok {
 		return
 	}
@@ -671,9 +699,9 @@ func (h *Handler) bind(c *gin.Context) {
 		fail(c, 400, "invalid_target_type")
 		return
 	}
-	b, err := h.createBinding(ctx, asset.ID, in.TargetEntityID, kind, role, p.ID)
+	b, err := h.createBinding(ctx, asset.ID, canonical, kind, role, p.ID)
 	if err != nil {
-		fail(c, 500, "module_error")
+		h.failStorageWrite(c, err)
 		return
 	}
 	audit.Describe(c, audit.Detail{TargetType: "binding", TargetID: b.ID, Changes: map[string]any{

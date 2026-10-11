@@ -35,6 +35,12 @@ const contentCacheSeconds = 300
 // 查库失败仍按不可读处理（与拆分前一致，属本地依赖，现场有日志）；而"目录结论不可知"
 // 必须对调用方可观测，否则上游抖动会表现成 404。
 func (h *Handler) readable(c *gin.Context, asset store.Asset) (bool, error) {
+	if err := h.db.CheckAssetActive(c.Request.Context(), asset.ID); err != nil {
+		if errors.Is(err, store.ErrAssetReclaiming) || errors.Is(err, store.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
 	p := auth.Current(c)
 	if canManageAsset(p, asset.UploaderID) {
 		return true, nil

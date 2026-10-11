@@ -4,17 +4,159 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // ReclaimClaimTimeout 是清理认领的持有上限：持有者超时未落定视为中断，
 // 后来者可接管（认领查询与候选列举都按它判定 staleBefore，口径同一处）。
 const ReclaimClaimTimeout = 10 * time.Minute
 
+// ReclaimObjectTimeout 限制持资产行锁的对象操作时长。
+const ReclaimObjectTimeout = 15 * time.Second
+
+var ErrReclaimKeyMismatch = errors.New("reclaim_key_mismatch")
+
 // quotaSiteLockKey 是全站预算的事务级 advisory lock 键：与迁移锁（740204）不同键，
 // 同一事务内只与用户预算锁配合。用户预算锁用 hashtext(uploader_id) 的 32 位变体，
 // 与 64 位变体的迁移锁不在同一键空间，不会互串。
 const quotaSiteLockKey = 740205
+
+// objectKeyLockNamespace 使用双 int advisory lock 空间，与迁移/配额的单 bigint 空间隔离。
+const objectKeyLockNamespace = 740206
+
+func lockObjectKeyTx(ctx context.Context, tx *sql.Tx, key string) error {
+	_, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock($1,hashtext($2))", objectKeyLockNamespace, key)
+	return err
+}
+
+// ReclaimClaimedAsset 安全收尾已认领的 pending；删除阶段持久登记后不能再被激活。
+func (s *Store) ReclaimClaimedAsset(ctx context.Context, id, token string, now time.Time, remove func(context.Context, Asset, bool) error) (bool, error) {
+	if token == "" {
+		return false, errors.New("reclaim token required")
+	}
+	return s.reclaimLocked(ctx, id, token, now, time.Time{}, false, remove)
+}
+
+// ReclaimUnbound 回收超过保留期的 complete。shared 为真时回调必须保留对象字节。
+// 固定锁序为对象键 → 资产行；插入资产共享对象键锁，绑定/激活共享资产行锁。
+func (s *Store) ReclaimUnbound(ctx context.Context, id string, before time.Time, remove func(context.Context, Asset, bool) error) (bool, error) {
+	return s.reclaimLocked(ctx, id, uuid.NewString(), time.Time{}, before, true, remove)
+}
+
+type reclaimState struct {
+	deleting bool
+	unbound  *time.Time
+	bound    bool
+}
+
+func lockReclaimAsset(ctx context.Context, tx *sql.Tx, id, key string) (Asset, reclaimState, error) {
+	if err := lockObjectKeyTx(ctx, tx, key); err != nil {
+		return Asset{}, reclaimState{}, err
+	}
+	a, err := scanAsset(tx.QueryRowContext(ctx, "SELECT "+assetCols+" FROM storage.assets WHERE id=$1 FOR UPDATE", id))
+	if err != nil {
+		return Asset{}, reclaimState{}, err
+	}
+	if a.ObjectKey != key {
+		return Asset{}, reclaimState{}, ErrNotFound // 指向已变，下一轮重新列举。
+	}
+	var state reclaimState
+	err = tx.QueryRowContext(ctx, "SELECT reclaim_deleting,unbound_since,"+
+		"EXISTS(SELECT 1 FROM storage.bindings WHERE asset_id=$1) FROM storage.assets WHERE id=$1", id).
+		Scan(&state.deleting, &state.unbound, &state.bound)
+	return a, state, err
+}
+
+func reclaimEligible(a Asset, st reclaimState, token string, now, before time.Time, complete bool) bool {
+	if a.Blocked || st.bound {
+		return false
+	}
+	if complete {
+		return a.Status == "complete" && st.unbound != nil && !st.unbound.After(before)
+	}
+	return a.Status == "pending" && a.ReclaimToken == token && a.UploadExpiresAt != nil && !a.UploadExpiresAt.After(now)
+}
+
+func reclaimKeyMatches(a Asset) bool {
+	if a.SHA256 == "" {
+		return false
+	}
+	prefix := a.SHA256
+	if len(prefix) > 2 {
+		prefix = prefix[:2]
+	}
+	return strings.HasPrefix(a.ObjectKey, "objects/"+prefix+"/"+a.SHA256+"/")
+}
+
+func (s *Store) reclaimLocked(ctx context.Context, id, token string, now, before time.Time, complete bool, remove func(context.Context, Asset, bool) error) (bool, error) {
+	if remove == nil {
+		return false, errors.New("reclaim object callback required")
+	}
+	var key string
+	if err := s.db.QueryRowContext(ctx, "SELECT object_key FROM storage.assets WHERE id=$1", id).Scan(&key); errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	// 先持久登记删除阶段。即使后续删字节后进程中断/提交失败，也不能再绑定缺失对象。
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	a, state, err := lockReclaimAsset(ctx, tx, id, key)
+	if errors.Is(err, ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !reclaimEligible(a, state, token, now, before, complete) {
+		return false, nil
+	}
+	if !reclaimKeyMatches(a) {
+		return false, ErrReclaimKeyMismatch
+	}
+	if _, err = tx.ExecContext(ctx, "UPDATE storage.assets SET reclaim_deleting=true,reclaim_token=$2,reclaim_claimed_at=now() WHERE id=$1", id, token); err != nil {
+		return false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+
+	tx, err = s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	a, state, err = lockReclaimAsset(ctx, tx, id, key)
+	if errors.Is(err, ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !state.deleting || a.ReclaimToken != token || !reclaimEligible(a, state, token, now, before, complete) {
+		return false, nil
+	}
+	var refs int64
+	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM storage.assets WHERE object_key=$1", key).Scan(&refs); err != nil {
+		return false, err
+	}
+	objectCtx, cancel := context.WithTimeout(ctx, ReclaimObjectTimeout)
+	err = remove(objectCtx, a, refs > 1)
+	cancel()
+	if err != nil {
+		return false, err // 留删除门禁；下一 worker 可重试，不能恢复为可绑定。
+	}
+	if _, err = tx.ExecContext(ctx, "DELETE FROM storage.assets WHERE id=$1 AND reclaim_deleting AND reclaim_token=$2", id, token); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}
 
 // ErrQuotaExceeded 表示容量预算不足（initiate/complete 按实际口径折成 413）。
 var ErrQuotaExceeded = errors.New("quota_exceeded")
@@ -32,7 +174,7 @@ type QuotaLimits struct {
 
 // TryClaimReclaim 按“pending + 未禁发 + 租约已过期 + 无绑定 + 无有效认领”原子认领一行。
 // 单条 UPDATE … RETURNING：认领本身就是门禁，成功才返回 claimed=true 与持有令牌的行。
-// 远程对象操作一律在认领之外做，终删凭令牌（见 DeleteClaimedAsset），不持长事务。
+// 认领之后经 ReclaimClaimedAsset 进入持久删除阶段，再持锁完成限时对象操作与删行。
 func (s *Store) TryClaimReclaim(ctx context.Context, id string, now time.Time, token string, staleBefore time.Time) (Asset, bool, error) {
 	if token == "" {
 		return Asset{}, false, errors.New("reclaim token required")
@@ -111,6 +253,9 @@ func (s *Store) CreatePendingAsset(ctx context.Context, a Asset, lim QuotaLimits
 	}
 	defer tx.Rollback()
 	if err = lockQuotaTx(ctx, tx, a.UploaderID); err != nil {
+		return err
+	}
+	if err = lockObjectKeyTx(ctx, tx, a.ObjectKey); err != nil {
 		return err
 	}
 	u, err := usageInTx(ctx, tx, "SELECT COALESCE(SUM(size_bytes) FILTER (WHERE status='complete'),0),"+

@@ -4,12 +4,13 @@
 // 由 cron/systemd timer 按周期触发——worker 只是同一个可执行程序的另一种模式，
 // 不是新的业务服务（生产目标 §6：worker 归各域）。
 //
-// 两条铁律：清理绝不动被绑定的资产；删字节前先隔离标记。
+// 两条铁律：清理绝不动被绑定的资产；删字节前持久登记删除阶段。
 // 任何一步的"不知道"（读失败、键对不上、缺失比例异常）都只上报不动手。
 package maintenance
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -32,6 +33,7 @@ const (
 // CleanupReport 是单次回收的结果：只计数与抽样键，全量明细看日志。
 type CleanupReport struct {
 	Candidates           int
+	UnboundRowsRemoved   int
 	Reclaimed            int
 	SharedRowsRemoved    int
 	ObjectAlreadyMissing int
@@ -43,16 +45,10 @@ type CleanupReport struct {
 	MismatchedKeys       []string
 }
 
-// RunCleanup 回收过期未完成的上传占位。每行的处置顺序是固定的：
-// 1. 原子认领（状态 + 租约版本 + 无绑定 + 无有效认领）：失败即他人已接管或行已转活跃；
-// 2. 重查绑定（认领与终删之间可能有人刚绑上）；
-// 3. 双向核对之键检查：对象键前缀必须与声明 sha 对上，否则这行指向了别人的字节；
-// 4. 查共享引用：仍有其它资产行（含 complete 秒传复用）指着同一键时只删行、不删字节；
-// 5. 独占且对象存在才删字节，删完凭令牌删行；对象本就不存在凭令牌只删行。
-// 认领与终删都是单条语句的短事务，远程对象操作在两者之间、不包事务。
-// 终删复核全部条件：续租/完成会清令牌并改租约/状态，绑定会让无绑定复核失败——
-// 主动方胜出，终删返回未删除时记 SkippedRevoked。
-// 读失败（Exists/Remove 报错）时释放认领、行与字节都保留——"不知道"不是"可以删"，下次可重试。
+// RunCleanup 回收过期 pending 与超过失绑保留期的 complete。
+// Store 在锁内复核状态、绑定、租约/保留期与共享引用，先持久登记删除阶段，
+// 再持对象键锁和资产行锁执行最多 15 秒的对象操作与删行。
+// 对象操作失败保留行供重试；删除阶段的行不能再次绑定/激活，崩溃亦不能恢复成缺字节的活跃资产。
 func RunCleanup(ctx context.Context, db *store.Store, objs *objects.Store, cfg config.Config) (CleanupReport, error) {
 	var rep CleanupReport
 	now := time.Now()
@@ -61,97 +57,85 @@ func RunCleanup(ctx context.Context, db *store.Store, objs *objects.Store, cfg c
 	if err != nil {
 		return rep, err
 	}
+	unboundBefore := now.Add(-cfg.UnboundRetention())
+	unbound, err := db.UnboundCandidates(ctx, unboundBefore, cleanupBatch)
+	if err != nil {
+		return rep, err
+	}
+	candidates = append(candidates, unbound...)
 	rep.Candidates = len(candidates)
 	for _, a := range candidates {
 		token := uuid.NewString()
-		claimed, ok, cerr := db.TryClaimReclaim(ctx, a.ID, now, token, staleBefore)
-		if cerr != nil {
+		if a.Status == "pending" {
+			claimed, ok, err := db.TryClaimReclaim(ctx, a.ID, now, token, staleBefore)
+			if err != nil {
+				rep.ObjectErrors++
+				continue
+			}
+			if !ok {
+				rep.SkippedRevoked++
+				continue
+			}
+			a = claimed
+		}
+		// outcome 只在事务提交成功后计入报告。
+		outcome := ""
+		remove := func(objectCtx context.Context, current store.Asset, shared bool) error {
+			if shared {
+				outcome = "shared"
+				return nil
+			}
+			exists, err := objs.Exists(objectCtx, current.ObjectKey)
+			if err != nil {
+				return err
+			}
+			if !exists {
+				outcome = "missing"
+				return nil
+			}
+			if err := objs.Remove(objectCtx, current.ObjectKey); err != nil {
+				return err
+			}
+			outcome = "removed"
+			return nil
+		}
+		var deleted bool
+		if a.Status == "complete" {
+			deleted, err = db.ReclaimUnbound(ctx, a.ID, unboundBefore, remove)
+		} else {
+			deleted, err = db.ReclaimClaimedAsset(ctx, a.ID, token, now, remove)
+			if err != nil || !deleted {
+				_ = db.ReleaseReclaimClaim(ctx, a.ID, token)
+			}
+		}
+		if errors.Is(err, store.ErrReclaimKeyMismatch) {
+			rep.SkippedKeyMismatch++
+			if len(rep.MismatchedKeys) < reportListCap {
+				rep.MismatchedKeys = append(rep.MismatchedKeys, a.ObjectKey)
+			}
+			continue
+		}
+		if err != nil {
 			rep.ObjectErrors++
 			continue
 		}
-		if !ok {
-			// 未认领到：候选列举后行已转活跃（续租/完成/绑定）或被另一 worker 接管。
+		if !deleted {
 			rep.SkippedRevoked++
 			continue
 		}
-		release := func() { _ = db.ReleaseReclaimClaim(ctx, claimed.ID, token) }
-		bound, err := db.HasBindings(ctx, claimed.ID)
-		if err != nil {
-			rep.ObjectErrors++
-			release()
-			continue
+		if a.Status == "complete" {
+			rep.UnboundRowsRemoved++
 		}
-		if bound {
-			rep.SkippedBound++
-			release()
-			continue
-		}
-		if !keyMatchesSHA(claimed.ObjectKey, claimed.SHA256) {
-			rep.SkippedKeyMismatch++
-			if len(rep.MismatchedKeys) < reportListCap {
-				rep.MismatchedKeys = append(rep.MismatchedKeys, claimed.ObjectKey)
-			}
-			release()
-			continue
-		}
-		refs, err := db.ObjectKeyRefCount(ctx, claimed.ObjectKey)
-		if err != nil {
-			rep.ObjectErrors++
-			release()
-			continue
-		}
-		if refs > 1 {
-			// 去重共享：complete 行正复用这份字节，清掉占位行即可，字节是别人的。
-			deleted, derr := db.DeleteClaimedAsset(ctx, claimed.ID, token, now)
-			if derr != nil {
-				rep.ObjectErrors++
-				release()
-				continue
-			}
-			if !deleted {
-				rep.SkippedRevoked++
-				release()
-				continue
-			}
+		switch outcome {
+		case "shared":
 			rep.SharedRowsRemoved++
-			continue
-		}
-		exists, err := objs.Exists(ctx, claimed.ObjectKey)
-		if err != nil {
-			rep.ObjectErrors++
-			release()
-			continue
-		}
-		if !exists {
-			deleted, derr := db.DeleteClaimedAsset(ctx, claimed.ID, token, now)
-			if derr != nil {
-				rep.ObjectErrors++
-				release()
-				continue
-			}
-			if !deleted {
-				rep.SkippedRevoked++
-				release()
-				continue
-			}
+		case "missing":
 			rep.ObjectAlreadyMissing++
-			continue
-		}
-		if err := objs.Remove(ctx, claimed.ObjectKey); err != nil {
-			rep.ObjectErrors++
-			release()
-			continue
-		}
-		deleted, derr := db.DeleteClaimedAsset(ctx, claimed.ID, token, now)
-		if derr != nil || !deleted {
-			// 字节已删、行还在：行已转活跃（删前瞬间被续租/完成/绑定）或写库失败。
-			// complete 行挂着缺失的键由对账标禁发，pending 行下次按缺失键收尾，可观测、可恢复。
-			rep.ObjectErrors++
-			continue
-		}
-		rep.Reclaimed++
-		if len(rep.RemovedKeys) < reportListCap {
-			rep.RemovedKeys = append(rep.RemovedKeys, claimed.ObjectKey)
+		case "removed":
+			rep.Reclaimed++
+			if len(rep.RemovedKeys) < reportListCap {
+				rep.RemovedKeys = append(rep.RemovedKeys, a.ObjectKey)
+			}
 		}
 	}
 	return rep, nil
@@ -243,25 +227,17 @@ func scanOrphans(ctx context.Context, db *store.Store, objs *objects.Store, cfg 
 		return err
 	}
 	for _, key := range due {
-		// 隔离前最后一查：扫描与搬运之间可能有人刚上传绑定上，台账过期则收尾。
-		ref, err := db.IsKeyReferenced(ctx, key)
+		moved, err := db.QuarantineOrphan(ctx, key, func(objectCtx context.Context) error {
+			_, err := objs.Quarantine(objectCtx, key)
+			return err
+		})
 		if err != nil {
-			rep.ReadErrors++
-			continue
-		}
-		if ref {
-			_ = db.ClearOrphan(ctx, key)
-			continue
-		}
-		if _, err := objs.Quarantine(ctx, key); err != nil {
 			rep.QuarantineErrors++
 			continue
 		}
-		if err := db.MarkOrphanQuarantined(ctx, key); err != nil {
-			rep.QuarantineErrors++
-			continue
+		if moved {
+			rep.OrphansQuarantined++
 		}
-		rep.OrphansQuarantined++
 	}
 	return nil
 }

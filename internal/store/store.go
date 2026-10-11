@@ -21,6 +21,9 @@ var ErrNotFound = errors.New("not_found")
 // 通过（VerifyHash）或流式上传边收边算（PutStream）产生，没有第三条路。
 var ErrAssetUnverified = errors.New("asset_unverified")
 
+// ErrAssetReclaiming 表示资产已进入持久登记的字节删除阶段，不能再次绑定或激活。
+var ErrAssetReclaiming = errors.New("asset_reclaiming")
+
 // 表结构在 migrations/ 下（000001_init.up.sql），由 Init → Migrate 在启动时应用：
 // 不再内联 DDL，避免结构与迁移文件各存一份、改一处漏一处。
 
@@ -127,21 +130,32 @@ func (s *Store) AssetByHash(ctx context.Context, sha256 string) (Asset, error) {
 // 一份等长的错内容就能把这个 sha256 占住，之后所有秒传都会命中错内容。
 // 未验证的命中一律当作不存在，调用方继续走正常上传。
 func (s *Store) VerifiedAssetByHash(ctx context.Context, sha256 string) (Asset, error) {
-	return scanAsset(s.db.QueryRowContext(ctx, "SELECT "+assetCols+" FROM storage.assets WHERE sha256=$1 AND hash_verified", sha256))
+	return scanAsset(s.db.QueryRowContext(ctx, "SELECT "+assetCols+" FROM storage.assets WHERE sha256=$1 AND hash_verified AND NOT reclaim_deleting", sha256))
 }
 
 // CreateAsset 登记一份上传占位：调用方（initiate）同时给出 upload_expires_at 租约，
 // NULL 表示存量/未知租约，回收查询按 created_at + 默认 TTL 兜底。
 func (s *Store) CreateAsset(ctx context.Context, a Asset) error {
-	_, err := s.db.ExecContext(ctx, "INSERT INTO storage.assets(id,sha256,size_bytes,declared_size,mime_type,file_name,object_key,status,multipart_upload_id,uploader_id,upload_expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = lockObjectKeyTx(ctx, tx, a.ObjectKey); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, "INSERT INTO storage.assets(id,sha256,size_bytes,declared_size,mime_type,file_name,object_key,status,multipart_upload_id,uploader_id,upload_expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
 		a.ID, a.SHA256, a.SizeBytes, a.DeclaredSize, a.MimeType, a.FileName, a.ObjectKey, a.Status, a.MultipartUploadID, a.UploaderID, a.UploadExpiresAt)
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // SetUploadSession 记录分片上传会话，便于中断后续传复用同一个 uploadID。
 func (s *Store) SetUploadSession(ctx context.Context, id, uploadID string) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE storage.assets SET multipart_upload_id=$2 WHERE id=$1", id, uploadID)
-	return err
+	res, err := s.db.ExecContext(ctx, "UPDATE storage.assets SET multipart_upload_id=$2 WHERE id=$1 AND NOT reclaim_deleting", id, uploadID)
+	return s.checkReclaimMutation(ctx, id, res, err)
 }
 
 // CompleteAsset 落定文件大小与完成状态；size 一律覆盖——两条上传路径都在落定前
@@ -150,11 +164,14 @@ func (s *Store) SetUploadSession(ctx context.Context, id, uploadID string) error
 // 只认 hash_verified=true 的行：完成态就是"可被秒传复用"的公开态，未验证的资产
 // 不能被任何调用方（包括将来新增的上传路径）推到这个状态上。
 func (s *Store) CompleteAsset(ctx context.Context, id string, size int64) error {
-	res, err := s.db.ExecContext(ctx, "UPDATE storage.assets SET status='complete', size_bytes=$2, completed_at=now(), reclaim_token='', reclaim_claimed_at=NULL WHERE id=$1 AND hash_verified", id, size)
+	res, err := s.db.ExecContext(ctx, "UPDATE storage.assets SET status='complete', size_bytes=$2, completed_at=now(), reclaim_token='', reclaim_claimed_at=NULL WHERE id=$1 AND hash_verified AND NOT reclaim_deleting", id, size)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
+		if err := s.checkReclaimMutation(ctx, id, res, nil); err != nil {
+			return err
+		}
 		return ErrAssetUnverified
 	}
 	return nil
@@ -181,8 +198,21 @@ func (s *Store) markHash(ctx context.Context, id string, verified bool, size int
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, "UPDATE storage.assets SET hash_verified=$2, reclaim_token='', reclaim_claimed_at=NULL WHERE id=$1", id, verified); err != nil {
+	res, err := tx.ExecContext(ctx, "UPDATE storage.assets SET hash_verified=$2, reclaim_token='', reclaim_claimed_at=NULL WHERE id=$1 AND NOT reclaim_deleting", id, verified)
+	if err != nil {
 		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		var deleting bool
+		if err = tx.QueryRowContext(ctx, "SELECT reclaim_deleting FROM storage.assets WHERE id=$1", id).Scan(&deleting); errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		if deleting {
+			return ErrAssetReclaiming
+		}
+		return nil
 	}
 	if verified {
 		_, err = tx.ExecContext(ctx, "UPDATE storage.assets SET size_bytes=$2 WHERE id=$1", id, size)
@@ -201,8 +231,21 @@ func (s *Store) Bind(ctx context.Context, b Binding) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err = checkCatalogBindingTarget(ctx, tx, &b); err != nil {
+		return err
+	}
+	var deleting bool
+	if err = tx.QueryRowContext(ctx, "SELECT reclaim_deleting FROM storage.assets WHERE id=$1 FOR UPDATE", b.AssetID).Scan(&deleting); errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	if deleting {
+		return ErrAssetReclaiming
+	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO storage.bindings(id,asset_id,target_entity_id,target_kind,binding_role,created_by)
-		VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(asset_id,target_entity_id,binding_role) DO NOTHING`,
+		VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(asset_id,target_entity_id,binding_role)
+		DO UPDATE SET confirmed_at=now()`,
 		b.ID, b.AssetID, b.TargetEntityID, b.TargetKind, b.BindingRole, b.CreatedBy); err != nil {
 		return err
 	}
@@ -210,6 +253,28 @@ func (s *Store) Bind(ctx context.Context, b Binding) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// checkReclaimMutation 区分删除阶段拒绝与资产已被回收，不能把空 UPDATE 当续租成功。
+func (s *Store) checkReclaimMutation(ctx context.Context, id string, res sql.Result, err error) error {
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil || n > 0 {
+		return err
+	}
+	var deleting bool
+	err = s.db.QueryRowContext(ctx, "SELECT reclaim_deleting FROM storage.assets WHERE id=$1", id).Scan(&deleting)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if deleting {
+		return ErrAssetReclaiming
+	}
+	return nil
 }
 
 func (s *Store) Binding(ctx context.Context, id string) (Binding, error) {

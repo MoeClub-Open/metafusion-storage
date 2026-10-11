@@ -39,6 +39,9 @@ type Config struct {
 	AuthURL string
 	// CatalogURL 元数据服务地址：实体可见性必须问它，存储侧不复制目录数据。
 	CatalogURL string
+	// CatalogLifecycleSecret authenticates the internal catalog reference consumer.
+	// Empty disables the route; it is separate from all user/session credentials.
+	CatalogLifecycleSecret string
 	// PresignTTL 预签名有效期；MaxPartCount 单次上传的最大分片数。
 	PresignTTL   time.Duration
 	MaxPartCount int
@@ -70,6 +73,8 @@ type Config struct {
 	// OrphanRetentionDays 是孤儿对象保留期（天）：对象存储上有、库里无引用的键，
 	// 首次发现超过该天数才由 worker 搬进 quarantine/ 隔离；隔离≠删除，字节删除由运维确认。
 	OrphanRetentionDays int
+	// UnboundRetentionDays 是 complete 资产最后解绑后的保留期；重新绑定重新起算。
+	UnboundRetentionDays int
 	// S3SkipBucketEnsure 是否跳过本服务的建桶检查：默认 false，保持既有行为
 	// 置 true 时跳过 BucketExists/MakeBucket，只用仅目标桶数据操作的服务凭据启动（最小权限，见 README）。
 	// 管理面（建桶/删桶/跨桶）用另外的运维身份，不与服务凭据共用。
@@ -78,35 +83,37 @@ type Config struct {
 
 func Load() Config {
 	c := Config{
-		Port:                  env("PORT", "8082"),
-		TrustedProxies:        env("TRUSTED_PROXIES", ""),
-		DatabaseURL:           env("DATABASE_URL", ""),
-		Root:                  env("STORAGE_ROOT", "./storage-data"),
-		S3Endpoint:            env("STORAGE_S3_ENDPOINT", ""),
-		S3PublicEndpoint:      env("STORAGE_S3_PUBLIC_ENDPOINT", ""),
-		S3AccessKey:           env("STORAGE_S3_ACCESS_KEY", ""),
-		S3SecretKey:           env("STORAGE_S3_SECRET_KEY", ""),
-		S3Bucket:              env("STORAGE_S3_BUCKET", "metafusion-master"),
-		S3TLS:                 envBool("STORAGE_S3_TLS", true),
-		JWKSURL:               env("STORAGE_JWKS_URL", "http://auth:8081/api/oidc/jwks"),
-		JWTPublicKeyPEM:       env("AUTH_JWT_PUBLIC_KEY", ""),
-		JWTIssuer:             env("AUTH_JWT_ISSUER", "https://findverse.cc/api"),
-		JWTAudience:           env("AUTH_JWT_AUDIENCE", "metafusion"),
-		AuthURL:               env("AUTH_URL", ""),
-		CatalogURL:            env("CATALOG_URL", "http://backend:8080"),
-		PresignTTL:            time.Duration(envInt("STORAGE_PRESIGN_TTL_MINUTES", 120)) * time.Minute,
-		MaxPartCount:          envInt("STORAGE_MAX_PARTS", 10000),
-		MaxUploadMB:           envInt("STORAGE_MAX_UPLOAD_MB", 0),
-		VerifyMaxMB:           envInt("STORAGE_VERIFY_MAX_MB", 0),
-		VerifyTimeout:         time.Duration(envInt("STORAGE_VERIFY_TIMEOUT_SECONDS", 0)) * time.Second,
-		PendingTTLHours:       envInt("STORAGE_PENDING_TTL_HOURS", 72),
-		UploadLeaseMinutes:    envInt("STORAGE_UPLOAD_LEASE_MINUTES", 0),
-		UserQuotaMB:           envInt("STORAGE_USER_QUOTA_MB", 0),
-		SiteQuotaMB:           envInt("STORAGE_SITE_QUOTA_MB", 0),
-		UserConcurrentUploads: envInt("STORAGE_USER_CONCURRENT_UPLOADS", 0),
-		SiteConcurrentUploads: envInt("STORAGE_SITE_CONCURRENT_UPLOADS", 0),
-		OrphanRetentionDays:   envInt("STORAGE_ORPHAN_RETENTION_DAYS", 7),
-		S3SkipBucketEnsure:    envBool("STORAGE_S3_SKIP_BUCKET_ENSURE", false),
+		Port:                   env("PORT", "8082"),
+		TrustedProxies:         env("TRUSTED_PROXIES", ""),
+		DatabaseURL:            env("DATABASE_URL", ""),
+		Root:                   env("STORAGE_ROOT", "./storage-data"),
+		S3Endpoint:             env("STORAGE_S3_ENDPOINT", ""),
+		S3PublicEndpoint:       env("STORAGE_S3_PUBLIC_ENDPOINT", ""),
+		S3AccessKey:            env("STORAGE_S3_ACCESS_KEY", ""),
+		S3SecretKey:            env("STORAGE_S3_SECRET_KEY", ""),
+		S3Bucket:               env("STORAGE_S3_BUCKET", "metafusion-master"),
+		S3TLS:                  envBool("STORAGE_S3_TLS", true),
+		JWKSURL:                env("STORAGE_JWKS_URL", "http://auth:8081/api/oidc/jwks"),
+		JWTPublicKeyPEM:        env("AUTH_JWT_PUBLIC_KEY", ""),
+		JWTIssuer:              env("AUTH_JWT_ISSUER", "https://findverse.cc/api"),
+		JWTAudience:            env("AUTH_JWT_AUDIENCE", "metafusion"),
+		AuthURL:                env("AUTH_URL", ""),
+		CatalogURL:             env("CATALOG_URL", "http://backend:8080"),
+		CatalogLifecycleSecret: env("STORAGE_CATALOG_LIFECYCLE_SECRET", ""),
+		PresignTTL:             time.Duration(envInt("STORAGE_PRESIGN_TTL_MINUTES", 120)) * time.Minute,
+		MaxPartCount:           envInt("STORAGE_MAX_PARTS", 10000),
+		MaxUploadMB:            envInt("STORAGE_MAX_UPLOAD_MB", 0),
+		VerifyMaxMB:            envInt("STORAGE_VERIFY_MAX_MB", 0),
+		VerifyTimeout:          time.Duration(envInt("STORAGE_VERIFY_TIMEOUT_SECONDS", 0)) * time.Second,
+		PendingTTLHours:        envInt("STORAGE_PENDING_TTL_HOURS", 72),
+		UploadLeaseMinutes:     envInt("STORAGE_UPLOAD_LEASE_MINUTES", 0),
+		UserQuotaMB:            envInt("STORAGE_USER_QUOTA_MB", 0),
+		SiteQuotaMB:            envInt("STORAGE_SITE_QUOTA_MB", 0),
+		UserConcurrentUploads:  envInt("STORAGE_USER_CONCURRENT_UPLOADS", 0),
+		SiteConcurrentUploads:  envInt("STORAGE_SITE_CONCURRENT_UPLOADS", 0),
+		OrphanRetentionDays:    envInt("STORAGE_ORPHAN_RETENTION_DAYS", 7),
+		UnboundRetentionDays:   envInt("STORAGE_UNBOUND_RETENTION_DAYS", 7),
+		S3SkipBucketEnsure:     envBool("STORAGE_S3_SKIP_BUCKET_ENSURE", false),
 	}
 	if c.UploadLeaseMinutes <= 0 {
 		c.UploadLeaseMinutes = int(c.PresignTTL.Minutes())
@@ -149,6 +156,14 @@ func (c Config) OrphanRetention() time.Duration {
 		return 7 * 24 * time.Hour
 	}
 	return time.Duration(c.OrphanRetentionDays) * 24 * time.Hour
+}
+
+// UnboundRetention 是已完成但失去全部绑定的资产保留期。
+func (c Config) UnboundRetention() time.Duration {
+	if c.UnboundRetentionDays <= 0 {
+		return 7 * 24 * time.Hour
+	}
+	return time.Duration(c.UnboundRetentionDays) * 24 * time.Hour
 }
 
 func env(k, def string) string {

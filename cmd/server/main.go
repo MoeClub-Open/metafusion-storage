@@ -49,8 +49,8 @@ func runWorker(ctx context.Context, db *store.Store, objs *objects.Store, cfg co
 		log.Printf("storage worker: cleanup failed: %v", err)
 		return 1
 	}
-	log.Printf("storage worker: cleanup candidates=%d reclaimed=%d shared_rows=%d already_missing=%d skipped_bound=%d key_mismatch=%d skipped_revoked=%d errors=%d",
-		cleanup.Candidates, cleanup.Reclaimed, cleanup.SharedRowsRemoved, cleanup.ObjectAlreadyMissing, cleanup.SkippedBound, cleanup.SkippedKeyMismatch, cleanup.SkippedRevoked, cleanup.ObjectErrors)
+	log.Printf("storage worker: cleanup candidates=%d reclaimed=%d unbound_rows=%d shared_rows=%d already_missing=%d skipped_bound=%d key_mismatch=%d skipped_revoked=%d errors=%d",
+		cleanup.Candidates, cleanup.Reclaimed, cleanup.UnboundRowsRemoved, cleanup.SharedRowsRemoved, cleanup.ObjectAlreadyMissing, cleanup.SkippedBound, cleanup.SkippedKeyMismatch, cleanup.SkippedRevoked, cleanup.ObjectErrors)
 	recon, err := maintenance.RunReconcile(ctx, db, objs, cfg)
 	if err != nil {
 		log.Printf("storage worker: reconcile failed: %v", err)

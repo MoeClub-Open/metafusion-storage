@@ -148,7 +148,7 @@ func (h *Handler) setBlocked(c *gin.Context, block bool) {
 	h.auditAsset(c, asset, nil)
 	if block {
 		if err := h.db.SetBlocked(ctx, asset.ID, reason); err != nil {
-			fail(c, 500, "module_error")
+			h.failStorageWrite(c, err)
 			return
 		}
 		now := time.Now()

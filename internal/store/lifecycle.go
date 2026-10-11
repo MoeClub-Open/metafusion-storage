@@ -34,10 +34,32 @@ func (s *Store) SiteUsage(ctx context.Context) (Usage, error) {
 }
 
 // SetUploadExpiry 设置上传租约到期时间；续传复用会话时刷新它，避免"传得慢就被回收"。
-// 续租即主动方胜出：同时清掉清理认领标记，持有令牌的清理在终删时会被条件挡住。
+// 尚未进入字节删除阶段时续租清掉认领标记；已经进入删除阶段时返回 ErrAssetReclaiming。
 func (s *Store) SetUploadExpiry(ctx context.Context, id string, expiresAt time.Time) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE storage.assets SET upload_expires_at=$2, reclaim_token='', reclaim_claimed_at=NULL WHERE id=$1", id, expiresAt)
-	return err
+	res, err := s.db.ExecContext(ctx, "UPDATE storage.assets SET upload_expires_at=$2, reclaim_token='', reclaim_claimed_at=NULL WHERE id=$1 AND NOT reclaim_deleting", id, expiresAt)
+	return s.checkReclaimMutation(ctx, id, res, err)
+}
+
+// UnboundCandidates 列出已完成、未禁发且最后解绑超过保留期的资产。
+// 从未绑定的 complete 在完成时开始计时，存量在 000006 迁移时开始计时。
+func (s *Store) UnboundCandidates(ctx context.Context, before time.Time, limit int) ([]Asset, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT "+assetCols+" FROM storage.assets a"+
+		" WHERE a.status='complete' AND NOT a.blocked AND a.unbound_since <= $1"+
+		" AND NOT EXISTS (SELECT 1 FROM storage.bindings b WHERE b.asset_id=a.id)"+
+		" ORDER BY a.unbound_since, a.id LIMIT $2", before, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Asset{}
+	for rows.Next() {
+		a, err := scanAsset(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }
 
 // ReclaimCandidates 列出可回收的过期 pending：无绑定、非禁发、租约已过期、无有效认领持有。
@@ -91,8 +113,8 @@ func (s *Store) ObjectKeyRefCount(ctx context.Context, objectKey string) (int64,
 // SetBlocked 禁发：只翻 blocked 位，不动 status——解禁后原状态仍在，
 // 不需要"解禁恢复 complete/pending"的分支。分发门禁见 handler.readable。
 func (s *Store) SetBlocked(ctx context.Context, id, reason string) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE storage.assets SET blocked=true, blocked_reason=$2, blocked_at=now() WHERE id=$1", id, reason)
-	return err
+	res, err := s.db.ExecContext(ctx, "UPDATE storage.assets SET blocked=true, blocked_reason=$2, blocked_at=now() WHERE id=$1 AND NOT reclaim_deleting", id, reason)
+	return s.checkReclaimMutation(ctx, id, res, err)
 }
 
 // ClearBlocked 解禁：复位标记与留痕字段，status 原样保留。
@@ -148,7 +170,7 @@ func (s *Store) ListCompleteKeys(ctx context.Context, limit, offset int) ([]Comp
 		offset = 0
 	}
 	rows, err := s.db.QueryContext(ctx, "SELECT id, object_key, sha256 FROM storage.assets"+
-		" WHERE status='complete' ORDER BY id ASC LIMIT $1 OFFSET $2", limit, offset)
+		" WHERE status='complete' AND NOT reclaim_deleting ORDER BY id ASC LIMIT $1 OFFSET $2", limit, offset)
 	if err != nil {
 		return nil, err
 	}
