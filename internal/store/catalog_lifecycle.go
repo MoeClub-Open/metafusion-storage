@@ -35,7 +35,7 @@ func (s *Store) CheckAssetActive(ctx context.Context, id string) error {
 type CatalogLifecycle struct {
 	EntityID      string           `json:"entity_id"`
 	Kind          string           `json:"kind"`
-	State        string           `json:"state"`
+	State         string           `json:"state"`
 	Version       int64            `json:"version"`
 	UpdatedAt     time.Time        `json:"updated_at"`
 	Aliases       []string         `json:"aliases"`
