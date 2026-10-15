@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { isAdminWorkspaceEmbedded, prepareAdminNavigation } from "@/lib/adminWorkspace";
 import { Button, Card, ConfirmDialog, EmptyState, Notice, SectionHeader, TextInput, useMessage } from "@/components/ui";
 import { describeApiError, normalizeIdInput, type Message } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
@@ -102,7 +103,7 @@ export default function ModerationPage() {
               <table className="w-full min-w-[48rem] text-left text-xs">
                 <thead className="border-b border-line text-text-faint"><tr><th className="px-3 py-2">{t("moderation.file")}</th><th className="px-3 py-2">{t("moderation.reason")}</th><th className="px-3 py-2">{t("moderation.blockedAt")}</th><th className="px-3 py-2">{t("bindings.column.actions")}</th></tr></thead>
                 <tbody>{assets.map((asset) => <tr key={asset.id} className="border-b border-line-subtle align-top">
-                  <td className="px-3 py-3"><Link href={`/assets?id=${encodeURIComponent(asset.id)}`} className="font-medium text-primary hover:underline">{asset.file_name || asset.id}</Link><div className="mt-1 font-mono text-[11px] text-text-faint">{asset.id}</div></td>
+                  <td className="px-3 py-3"><Link replace={isAdminWorkspaceEmbedded()} onClick={(event) => prepareAdminNavigation(event.currentTarget.href, event)} href={`/assets?id=${encodeURIComponent(asset.id)}`} className="font-medium text-primary hover:underline">{asset.file_name || asset.id}</Link><div className="mt-1 font-mono text-[11px] text-text-faint">{asset.id}</div></td>
                   <td className="max-w-xs break-words px-3 py-3 text-text-body">{asset.blocked_reason || "—"}</td>
                   <td className="px-3 py-3 text-text-muted">{asset.blocked_at ? formatDateTime(asset.blocked_at, locale) : "—"}</td>
                   <td className="px-3 py-3"><Button variant="ghost" onClick={() => setAction({ id: asset.id, blocked: false })}>{t("moderation.unblock")}</Button></td>

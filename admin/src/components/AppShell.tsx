@@ -3,13 +3,14 @@
 // 与主站同域同路径前缀，因此语言与主题沿用同一套 cookie / localStorage 口径。
 import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/ui";
 import { useSession } from "@/components/SessionProvider";
 import { useI18n } from "@/shared/i18n/I18nProvider";
 import { BASE_PATH } from "@/lib/app";
 import { PERMISSION_ASSET_MODERATE } from "@/lib/session";
 import { locales } from "@/shared/i18n/routing";
+import { connectAdminWorkspace, prepareAdminNavigation, announceAdminNavigation } from "@/lib/adminWorkspace";
 import { ThemeModeSwitcher } from "./ThemeModeSwitcher";
 
 const NAV = [
@@ -20,19 +21,28 @@ const NAV = [
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const { t } = useI18n();
+  const { t, setLocale } = useI18n();
+  const [embedded, setEmbedded] = useState(false);
+  useEffect(() => {
+    const disconnect = connectAdminWorkspace(setLocale);
+    setEmbedded(disconnect !== null);
+    return disconnect ?? undefined;
+  }, [setLocale]);
   const { state, can } = useSession();
   const pathname = usePathname();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   // usePathname 返回的是带 basePath 的完整路径，去掉前缀后才能与上面的 href 比。
   const rest = pathname.startsWith(BASE_PATH) ? pathname.slice(BASE_PATH.length) || "/" : pathname;
   const current = rest.replace(/\/+$/, "") || "/";
   const visibleNav = NAV.filter((item) => item.href !== "/moderation" || can(PERMISSION_ASSET_MODERATE));
 
+  useEffect(() => { announceAdminNavigation(); }, [pathname, searchParams]);
+
   return (
     <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-30 border-b border-line bg-surface/90 backdrop-blur">
+      <header hidden={embedded} className="sticky top-0 z-30 border-b border-line bg-surface/90 backdrop-blur">
         <div className="mx-auto flex h-14 w-full max-w-page items-center justify-between gap-2 px-4 sm:px-6">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <a href="/admin" aria-label={t("nav.backToHub")} title={t("nav.backToHub")} className="inline-flex h-11 w-11 sm:w-auto shrink-0 items-center justify-center gap-1 text-xs text-text-muted hover:text-text-strong"><span aria-hidden="true">←</span><span className="hidden sm:inline">{t("nav.backToHub")}</span></a>
@@ -51,17 +61,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <nav className="shrink-0 lg:w-52" aria-label={t("nav.groupLabel")}>
           <div className="rounded-control border border-line bg-surfaceSubtle p-3 lg:hidden">
             <label htmlFor="storage-admin-section" className="mb-2 block text-xs font-medium text-text-muted">{t("nav.groupLabel")}</label>
-            <select id="storage-admin-section" value={current} onChange={(e) => router.push(e.target.value)} className="w-full rounded-control border border-line bg-surface px-3 py-2.5 text-sm text-text-strong">
+            <select id="storage-admin-section" value={current} onChange={(e) => { prepareAdminNavigation("/admin/storage" + e.target.value); if (embedded) router.replace(e.target.value); else router.push(e.target.value); }} className="w-full rounded-control border border-line bg-surface px-3 py-2.5 text-sm text-text-strong">
               {visibleNav.map((item) => <option key={item.href} value={item.href}>{t(item.key)}</option>)}
             </select>
           </div>
-          <ul className="hidden rounded-control border border-line bg-surfaceSubtle p-2 lg:sticky lg:top-24 lg:flex lg:flex-col">
+          <ul className={`hidden rounded-control border border-line bg-surfaceSubtle p-2 lg:sticky ${embedded ? "lg:top-6" : "lg:top-24"} lg:flex lg:flex-col`}>
             {visibleNav.map((item) => {
               const active = current === item.href;
               return (
                 <li key={item.href} className="shrink-0">
                   <Link
                     href={item.href}
+                    replace={embedded}
+                    onClick={(event) => prepareAdminNavigation(event.currentTarget.href, event)}
                     aria-current={active ? "page" : undefined}
                     className={
                       "flex items-center gap-3 rounded-control px-3 py-2.5 text-sm transition-colors " +

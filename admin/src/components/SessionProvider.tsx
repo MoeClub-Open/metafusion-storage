@@ -4,6 +4,7 @@
 // 这里不做服务端鉴权（真正的闸门在存储服务侧），只是把"没登录/无权限"的界面收敛掉。
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Icon, Notice } from "@/components/ui";
+import { requestAdminWorkspaceLogin } from "@/lib/adminWorkspace";
 import { BASE_PATH } from "@/lib/app";
 import { useI18n } from "@/shared/i18n/I18nProvider";
 import { can as canCode, fetchSession, loginRedirectUrl, type SessionUser } from "@/lib/session";
@@ -42,7 +43,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         const owned = window.location.pathname.startsWith(BASE_PATH);
         if (owned && !redirected.current) {
           redirected.current = true;
-          window.location.replace(loginRedirectUrl());
+          if (!requestAdminWorkspaceLogin()) window.location.replace(loginRedirectUrl());
         }
         return;
       }
