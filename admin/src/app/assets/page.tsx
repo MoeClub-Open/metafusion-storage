@@ -4,6 +4,8 @@
 // 否则运维会以为是自己拼错了 id。
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { isAdminWorkspaceEmbedded, prepareAdminNavigation } from "@/lib/adminWorkspace";
 import { Badge, Button, Card, CopyField, DataList, EmptyState, Icon, Notice, SectionHeader, Spinner, TextInput, useMessage } from "@/components/ui";
 import { BindingTable } from "@/components/BindingTable";
 import { ApiError, describeApiError, normalizeIdInput, type Message } from "@/lib/api";
@@ -17,6 +19,7 @@ import { BASE_PATH } from "@/lib/app";
 export default function AssetsPage() {
   const { t, locale } = useI18n();
   const text = useMessage();
+  const selectedId = useSearchParams().get("id");
   const { can } = useSession();
   const [value, setValue] = useState("");
   const [data, setData] = useState<AssetResponse | null>(null);
@@ -79,12 +82,16 @@ export default function AssetsPage() {
 
   // 深链：资产页在绑定页里被引用时带 ?id=<uuid> 过来，落地即查。
   useEffect(() => {
-    const fromUrl = new URLSearchParams(window.location.search).get("id");
+    const fromUrl = selectedId;
     if (fromUrl && isUuid(fromUrl)) {
       setValue(fromUrl);
       void load(fromUrl);
+    } else {
+      assetRequest.current += 1;
+      setValue(fromUrl ?? ""); setData(null); setLoading(false);
+      setError(fromUrl ? { key: "assets.invalidId" } : null);
     }
-  }, [load]);
+  }, [load, selectedId]);
 
   const submit = () => {
     const id = normalizeIdInput(value);
@@ -96,8 +103,10 @@ export default function AssetsPage() {
       return;
     }
     setValue(id);
-    window.history.replaceState(null, "", window.location.pathname + "?id=" + encodeURIComponent(id));
-    void load(id);
+    const href = window.location.pathname + "?id=" + encodeURIComponent(id);
+    prepareAdminNavigation(href);
+    window.history.replaceState(window.history.state, "", href);
+    if (id === selectedId) void load(id);
   };
 
   const asset = data?.asset ?? null;
@@ -223,7 +232,7 @@ export default function AssetsPage() {
                   : null,
               ].filter(Boolean) as { label: string; value: React.ReactNode; mono?: boolean }[]}
             />
-            {can(PERMISSION_ASSET_MODERATE) ? <Link href="/moderation" className="mt-4 inline-flex text-xs text-primary hover:underline">{t("nav.moderation")}</Link> : null}
+            {can(PERMISSION_ASSET_MODERATE) ? <Link replace={isAdminWorkspaceEmbedded()} onClick={(event) => prepareAdminNavigation(event.currentTarget.href, event)} href="/moderation" className="mt-4 inline-flex text-xs text-primary hover:underline">{t("nav.moderation")}</Link> : null}
             <div className="mt-4 space-y-2">
               <div>
                 <div className="mb-1 text-[11px] uppercase tracking-wide text-text-faint">{t("assets.field.sha256")}</div>

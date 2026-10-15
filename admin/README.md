@@ -4,6 +4,21 @@ MetaFusion 存储域自带的管理界面。**独立应用 + 同域路径 + 网�
 决议见主仓库 [多项目解耦审计](https://github.com/MoeclubM/MetaFusion/blob/main/docs/architecture/service-decoupling-roadmap.md) §7.3：
 管理面归各服务自己，改一域的管理界面只重发那一域的镜像，主前端不再是所有服务的发布闸门。
 
+
+## 管理中心工作区
+
+站点统一入口为 `/admin`，顶栏切换到本服务可用 `/admin?workspace=storage`，
+具体页面由 `path` 参数保存，刷新和复制地址均可恢复。主前端使用同源 iframe 承载本应用，
+切换时保留已经打开的工作区；直接访问 `/admin/storage/` 仍可独立使用。
+
+`src/lib/adminWorkspace.ts` 实现 `metafusion.admin.v1` 协议：仅在同源 `/admin` 父页面、
+且窗口名为 `metafusion-admin-storage` 时启用。嵌入时收起自己的顶栏，接收语言和主题偏好，
+回报页面导航与登录失效；消息必须同时核对 origin、source、channel 和 workspace。
+会话、权限、业务请求与服务端授权仍由本应用处理，不从父页面接收令牌或权限。
+跨出本应用的普通链接在顶层打开；失去登录态时由管理中心跳登录，并保留当前工作区回跳地址。
+
+主仓与本应用需同时具备 v1 协议；旧版应用不响应时，管理中心显示重试和独立打开入口。
+
 ## 冻结契约
 
 | 项 | 值 |
@@ -70,6 +85,8 @@ docker build -f admin/Dockerfile -t metafusion-storage-admin .
 忽略文件是仓库根的 `.dockerignore`（上下文根只能有一处），`admin/` 下不再放一份不会生效的副本。
 
 ## 验证
+
+`bun run test` 验证同源工作区协议、偏好同步和导航历史。
 
 ```bash
 cd admin

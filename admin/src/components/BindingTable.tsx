@@ -7,6 +7,7 @@
 //   2. 无论成功还是 404，都**重新取数**：成功要拿掉那一行，404 说明手上这份列表已经过期。
 import React from "react";
 import Link from "next/link";
+import { isAdminWorkspaceEmbedded, prepareAdminNavigation } from "@/lib/adminWorkspace";
 import { ApiError, describeApiError, type Message } from "@/lib/api";
 import { deleteBinding, type Asset, type Binding } from "@/lib/storage";
 import { formatDateTime } from "@/lib/format";
@@ -92,7 +93,7 @@ export function BindingTable({
                 <tr key={row.id} className="border-t border-line/60 align-top">
                   {showAsset ? (
                     <td className="px-3 py-2">
-                      <Link href={`/assets?id=${encodeURIComponent(row.asset_id)}`} className="font-mono text-[11px] text-primary hover:underline">{row.asset?.file_name ?? row.asset_id}</Link>
+                      <Link replace={isAdminWorkspaceEmbedded()} onClick={(event) => prepareAdminNavigation(event.currentTarget.href, event)} href={`/assets?id=${encodeURIComponent(row.asset_id)}`} className="font-mono text-[11px] text-primary hover:underline">{row.asset?.file_name ?? row.asset_id}</Link>
                       <div className="font-mono text-[10px] text-text-faint">{row.asset_id}</div>
                     </td>
                   ) : null}
