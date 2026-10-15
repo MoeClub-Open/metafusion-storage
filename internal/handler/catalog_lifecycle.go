@@ -91,7 +91,7 @@ func validCatalogLifecycle(s store.CatalogLifecycle) bool {
 	}
 	switch s.Status {
 	case "deleted":
-	case "draft", "pending_review", "published":
+	case "active":
 		if !codePattern.MatchString(s.Kind) {
 			return false
 		}

@@ -17,7 +17,7 @@ func TestCatalogLifecycleMigrationsReplayOnPostgres(t *testing.T) {
 	defer tx.Rollback()
 	for attempt := 0; attempt < 2; attempt++ {
 		for _, name := range []string{
-			"000006_unbound_retention.up.sql", "000007_catalog_lifecycle.up.sql", "000008_binding_confirmation.up.sql",
+			"000006_unbound_retention.up.sql", "000007_catalog_lifecycle.up.sql", "000008_binding_confirmation.up.sql", "000009_catalog_review_state.up.sql",
 		} {
 			body, err := migrationFS.ReadFile("migrations/" + name)
 			if err != nil {
@@ -78,7 +78,7 @@ func TestCatalogLifecyclePreservesMergeDraftAndSharedAssetsOnPostgres(t *testing
 	if err != nil || confirmed.ID != fresh {
 		t.Fatalf("rebind replaced the original binding identity: %+v %v", confirmed, err)
 	}
-	state := CatalogLifecycle{EntityID: canonical, Kind: "work", Status: "published", Version: 3,
+	state := CatalogLifecycle{EntityID: canonical, Kind: "work", Status: "active", Version: 3,
 		UpdatedAt: cutoff, Aliases: []string{source}, AliasVersions: map[string]int64{source: 2},
 		CoverAssetIDs: []string{assets[0].ID, assets[1].ID}}
 	for i := 0; i < 2; i++ {
@@ -119,7 +119,7 @@ func TestCatalogLifecyclePreservesMergeDraftAndSharedAssetsOnPostgres(t *testing
 		TargetKind: "work", BindingRole: "cover_image", CreatedBy: uploader}); !errors.Is(err, ErrInvalidBindingTarget) {
 		t.Fatalf("in-flight stale binding should conflict after merge: %v", err)
 	}
-	state.Status, state.Version = "draft", 4
+	state.Status, state.Version = "active", 4
 	if err := s.ApplyCatalogLifecycle(ctx, state); err != nil {
 		t.Fatal(err)
 	}
