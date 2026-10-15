@@ -46,7 +46,7 @@ func TestCatalogLifecycleRequiresConfiguredServiceCredential(t *testing.T) {
 
 func TestCatalogLifecycleRejectsIncompleteAliasSnapshots(t *testing.T) {
 	id, alias := uuid.NewString(), uuid.NewString()
-	state := store.CatalogLifecycle{EntityID: id, Kind: "work", Status: "active", Version: 2,
+	state := store.CatalogLifecycle{EntityID: id, Kind: "work", State: "active", Version: 2,
 		UpdatedAt: time.Now(), Aliases: []string{alias}, AliasVersions: map[string]int64{alias: 2}}
 	if !validCatalogLifecycle(state) {
 		t.Fatal("complete draft snapshot rejected")

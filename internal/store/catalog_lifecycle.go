@@ -35,7 +35,7 @@ func (s *Store) CheckAssetActive(ctx context.Context, id string) error {
 type CatalogLifecycle struct {
 	EntityID      string           `json:"entity_id"`
 	Kind          string           `json:"kind"`
-	Status        string           `json:"state"`
+	State        string           `json:"state"`
 	Version       int64            `json:"version"`
 	UpdatedAt     time.Time        `json:"updated_at"`
 	Aliases       []string         `json:"aliases"`
@@ -82,15 +82,15 @@ func checkCatalogBindingTarget(ctx context.Context, tx *sql.Tx, b *Binding) erro
 	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock($1)", catalogLifecycleLockID); err != nil {
 		return err
 	}
-	var status string
-	err := tx.QueryRowContext(ctx, "SELECT status FROM storage.catalog_lifecycle_state WHERE entity_id=$1", b.TargetEntityID).Scan(&status)
+	var stateCode string
+	err := tx.QueryRowContext(ctx, "SELECT state FROM storage.catalog_lifecycle_state WHERE entity_id=$1", b.TargetEntityID).Scan(&stateCode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if status == "merged" || status == "deleted" {
+	if stateCode == "merged" || stateCode == "deleted" {
 		// The HTTP write path resolves canonical identity first. A transition
 		// between that read and this write is a retryable conflict, not a stale
 		// binding recreated after the lifecycle consumer has already cleaned it.
@@ -191,7 +191,7 @@ func (s *Store) ApplyCatalogLifecycle(ctx context.Context, state CatalogLifecycl
 		return err
 	}
 	rows.Close()
-	if state.Status == "deleted" {
+	if state.State == "deleted" {
 		_, err = tx.ExecContext(ctx, "DELETE FROM storage.bindings WHERE target_entity_id=ANY($1::uuid[])", pq.Array(ids))
 	} else {
 		// Keep an existing canonical binding on collision; otherwise preserve
@@ -215,14 +215,14 @@ func (s *Store) ApplyCatalogLifecycle(ctx context.Context, state CatalogLifecycl
 		return err
 	}
 	for _, id := range ids {
-		status, canonical := state.Status, state.EntityID
-		if id != state.EntityID && status != "deleted" {
-			status = "merged"
+		stateCode, canonical := state.State, state.EntityID
+		if id != state.EntityID && stateCode != "deleted" {
+			stateCode = "merged"
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO storage.catalog_lifecycle_state(entity_id,version,status,canonical_id,entity_updated_at)
-			VALUES($1,$2,$3,$4,$5) ON CONFLICT(entity_id) DO UPDATE SET version=EXCLUDED.version,status=EXCLUDED.status,
+		if _, err := tx.ExecContext(ctx, `INSERT INTO storage.catalog_lifecycle_state(entity_id,version,state,canonical_id,entity_updated_at)
+			VALUES($1,$2,$3,$4,$5) ON CONFLICT(entity_id) DO UPDATE SET version=EXCLUDED.version,state=EXCLUDED.state,
 			canonical_id=EXCLUDED.canonical_id,entity_updated_at=EXCLUDED.entity_updated_at,applied_at=now()`,
-			id, versions[id], status, canonical, state.UpdatedAt); err != nil {
+			id, versions[id], stateCode, canonical, state.UpdatedAt); err != nil {
 			return err
 		}
 	}

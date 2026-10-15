@@ -89,7 +89,7 @@ func validCatalogLifecycle(s store.CatalogLifecycle) bool {
 	if !validID(s.EntityID) || s.Version <= 0 || s.UpdatedAt.IsZero() || len(s.Aliases) > 10000 || len(s.CoverAssetIDs) > 10000 {
 		return false
 	}
-	switch s.Status {
+	switch s.State {
 	case "deleted":
 	case "active":
 		if !codePattern.MatchString(s.Kind) {

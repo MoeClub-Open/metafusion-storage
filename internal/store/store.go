@@ -98,7 +98,7 @@ func (s *Store) Close() error { return s.db.Close() }
 func (s *Store) DB() *sql.DB { return s.db }
 
 // Init 应用尚未记账的迁移（DDL 见 migrations/，账本 storage.schema_migrations）。
-// 保持"启动即可用"的既有行为：迁移文件本身幂等，老实例重复启动不会改结构。
+// 保持"启动即可用"的既有行为：已执行迁移由账本跳过，重复启动不重放结构迁移。
 func (s *Store) Init(ctx context.Context) error {
 	_, err := s.Migrate(ctx)
 	return err

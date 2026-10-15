@@ -10,31 +10,52 @@ import (
 
 func TestCatalogLifecycleMigrationsReplayOnPostgres(t *testing.T) {
 	s, ctx := reclaimTestStore(t)
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := s.Init(ctx); err != nil {
+			t.Fatalf("migration ledger replay %d: %v", attempt, err)
+		}
+	}
+	var ready bool
+	if err := s.db.QueryRowContext(ctx, `SELECT to_regclass('storage.catalog_lifecycle_canonical') IS NOT NULL
+        AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='storage' AND table_name='catalog_lifecycle_state' AND column_name='state')
+        AND NOT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='storage' AND table_name='catalog_lifecycle_state' AND column_name='status')
+        AND EXISTS(SELECT 1 FROM storage.schema_migrations WHERE version='000010_catalog_state')`).Scan(&ready); err != nil || !ready {
+		t.Fatalf("current lifecycle schema missing: ready=%t err=%v", ready, err)
+	}
+}
+
+func TestCatalogLifecycleStateRenamePreservesWatermarksOnPostgres(t *testing.T) {
+	s, ctx := reclaimTestStore(t)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	for attempt := 0; attempt < 2; attempt++ {
-		for _, name := range []string{
-			"000006_unbound_retention.up.sql", "000007_catalog_lifecycle.up.sql", "000008_binding_confirmation.up.sql", "000009_catalog_review_state.up.sql",
-		} {
-			body, err := migrationFS.ReadFile("migrations/" + name)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := tx.ExecContext(ctx, string(body)); err != nil {
-				t.Fatalf("migration %s replay %d: %v", name, attempt, err)
-			}
-		}
+	if _, err = tx.ExecContext(ctx, `ALTER TABLE storage.catalog_lifecycle_state RENAME COLUMN state TO status;
+        ALTER TABLE storage.catalog_lifecycle_state RENAME CONSTRAINT catalog_lifecycle_state_state_check TO catalog_lifecycle_state_status_check`); err != nil {
+		t.Fatal(err)
 	}
-	var indexExists bool
-	if err := tx.QueryRowContext(ctx, "SELECT to_regclass('storage.catalog_lifecycle_canonical') IS NOT NULL").Scan(&indexExists); err != nil || !indexExists {
-		t.Fatalf("canonical lifecycle index absent after migrations: exists=%t err=%v", indexExists, err)
+	id := uuid.NewString()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO storage.catalog_lifecycle_state(entity_id,version,status,canonical_id,entity_updated_at) VALUES($1,17,'active',$1,now())`, id); err != nil {
+		t.Fatal(err)
+	}
+	var before, after string
+	if err = tx.QueryRowContext(ctx, `SELECT md5((to_jsonb(t)-'status')::text) FROM storage.catalog_lifecycle_state t WHERE entity_id=$1`, id).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	migration, err := migrationFS.ReadFile("migrations/000010_catalog_state.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.ExecContext(ctx, string(migration)); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT md5((to_jsonb(t)-'state')::text) FROM storage.catalog_lifecycle_state t WHERE entity_id=$1 AND state='active'`, id).Scan(&after); err != nil || before != after {
+		t.Fatalf("watermark or identity changed: %v", err)
 	}
 }
 
-func TestCatalogLifecyclePreservesMergeDraftAndSharedAssetsOnPostgres(t *testing.T) {
+func TestCatalogLifecyclePreservesActiveMergeAndSharedAssetsOnPostgres(t *testing.T) {
 	s, ctx := reclaimTestStore(t)
 	source, canonical, other := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	uploader := uuid.NewString()
@@ -78,7 +99,7 @@ func TestCatalogLifecyclePreservesMergeDraftAndSharedAssetsOnPostgres(t *testing
 	if err != nil || confirmed.ID != fresh {
 		t.Fatalf("rebind replaced the original binding identity: %+v %v", confirmed, err)
 	}
-	state := CatalogLifecycle{EntityID: canonical, Kind: "work", Status: "active", Version: 3,
+	state := CatalogLifecycle{EntityID: canonical, Kind: "work", State: "active", Version: 3,
 		UpdatedAt: cutoff, Aliases: []string{source}, AliasVersions: map[string]int64{source: 2},
 		CoverAssetIDs: []string{assets[0].ID, assets[1].ID}}
 	for i := 0; i < 2; i++ {
@@ -119,7 +140,7 @@ func TestCatalogLifecyclePreservesMergeDraftAndSharedAssetsOnPostgres(t *testing
 		TargetKind: "work", BindingRole: "cover_image", CreatedBy: uploader}); !errors.Is(err, ErrInvalidBindingTarget) {
 		t.Fatalf("in-flight stale binding should conflict after merge: %v", err)
 	}
-	state.Status, state.Version = "active", 4
+	state.State, state.Version = "active", 4
 	if err := s.ApplyCatalogLifecycle(ctx, state); err != nil {
 		t.Fatal(err)
 	}
@@ -128,14 +149,14 @@ func TestCatalogLifecyclePreservesMergeDraftAndSharedAssetsOnPostgres(t *testing
 	}
 	// A delayed pre-merge source snapshot cannot undo migration or remove the
 	// source cover now attached to canonical identity.
-	stale := CatalogLifecycle{EntityID: source, Status: "deleted", Version: 1, UpdatedAt: cutoff}
+	stale := CatalogLifecycle{EntityID: source, State: "deleted", Version: 1, UpdatedAt: cutoff}
 	if err := s.ApplyCatalogLifecycle(ctx, stale); err != nil {
 		t.Fatal(err)
 	}
 	if files, _ := s.BindingsForEntity(ctx, canonical); len(files) != 4 {
 		t.Fatal("stale source event withdrew canonical files")
 	}
-	state.Status, state.Version = "deleted", 5
+	state.State, state.Version = "deleted", 5
 	if err := s.ApplyCatalogLifecycle(ctx, state); err != nil {
 		t.Fatal(err)
 	}
