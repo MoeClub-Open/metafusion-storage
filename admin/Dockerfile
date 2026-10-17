@@ -10,14 +10,14 @@
 # 多阶段 standalone 模式照抄主仓库 frontend/Dockerfile（样板），构建器用 Bun：
 # Next 的 standalone 产物自带最小 server.js，运行时不需要 node_modules。
 # ==============================================================================
-FROM oven/bun:1.4-alpine AS base
+FROM oven/bun:1.4.3-alpine AS base
 
 FROM base AS deps
 WORKDIR /app
-# 锁文件用 bun.lock（bun 1.2+ 的文本格式；1.2 之前是二进制 bun.lockb，同一条 glob 都覆盖）。
-COPY admin/package.json admin/bun.lock* ./
+# 按提交的 bun.lock 安装；锁文件缺失或漂移时构建失败。
+COPY admin/package.json admin/bun.lock ./
 RUN --mount=type=cache,target=/root/.bun \
-    bun install --frozen-lockfile 2>/dev/null || bun install
+    bun install --frozen-lockfile
 
 FROM base AS builder
 WORKDIR /app
