@@ -151,8 +151,8 @@ JWKS 拉取**刻意不走**这套执行器：公钥拉取自带 10 分钟缓存�
 不设封闭枚举：`track_audio`（分轨音频）、`disc_image`（整碟镜像）、`video`、`scans`（扫描件）、
 `subtitle`、`ebook` 等由运维与编目约定，新增用途不需要改代码。
 
-`cover_image` 是目录侧自托管封面的预设：一张图一条绑定，`target_entity_id` 就是引用这张图的
-目录实体，稳定地址是 `GET /api/storage/assets/{id}/content`，目录侧把它写进
+`cover_image` 是目录正式合入后自动管理的封面用途，客户端不能直接创建或删除该绑定。
+`target_entity_id` 是引用图片的目录实体，稳定地址是 `GET /api/storage/assets/{id}/content`，目录侧把它写进
 `pictures[].url`、把同一个资产 uuid 写进 `pictures[].asset_id`。展示顺序由目录侧的
 `pictures[]` 数组顺序决定，存储侧不另存排序列（`storage.bindings` 没有 position 列）。
 
@@ -172,7 +172,7 @@ JWKS 拉取**刻意不走**这套执行器：公钥拉取自带 10 分钟缓存�
 | `AUTH_JWT_PUBLIC_KEY` | 空 | 静态公钥（PEM 或 base64 PEM）；设置后不再请求 JWKS |
 | `AUTH_JWT_ISSUER` / `AUTH_JWT_AUDIENCE` | `https://findverse.cc/api` / `metafusion` | 与主仓库保持一致，避免存量令牌失效 |
 | `CATALOG_URL` | `http://backend:8080` | 目录服务地址（可见性判定） |
-| `STORAGE_CATALOG_LIFECYCLE_SECRET` | 空 | 目录撤引用消费者的专用服务凭据；两侧配置相同值，空值关闭内部接口，不能使用用户 JWT/PAT 替代 |
+| `STORAGE_CATALOG_LIFECYCLE_SECRET` | 空 | 自托管图片协作所需的专用服务凭据；由运维填写并在目录与存储两侧配置同一值，不自动生成，不能使用用户 JWT/PAT 替代 |
 | `STORAGE_PRESIGN_TTL_MINUTES` | `120` | 预签名有效期；同时是上传租约的默认寿命（签发地址过期了租约也没意义） |
 | `STORAGE_MAX_PARTS` | `10000` | 单次上传最大分片数 |
 | `STORAGE_MAX_UPLOAD_MB` | `0` | 服务端接收路径的上限，`0` 为不限制（直传路径不受此限） |
@@ -284,21 +284,43 @@ storage-server worker   # 跑一次就退出：过期上传/失绑资产回收 +
 
 ### 目录绑定生命周期
 
+使用自托管图片时必须配置目录侧 `STORAGE_URL`，并在目录与存储两侧填写相同的
+`STORAGE_CATALOG_LIFECYCLE_SECRET`。默认空值不会自动完成配置；未配置时包含自托管资产的
+checkout、保存与合入返回 `503 storage_unavailable`。仅使用外链图片或没有图片的条目不依赖该连接。
+
 目录服务配置 `STORAGE_URL` 与 `STORAGE_CATALOG_LIFECYCLE_SECRET` 后，先从存储
 `GET /internal/catalog/binding-targets` 的 UUID 游标分页库存复核既有绑定，再消费
-`entity.saved/deleted/merged/unpublished` outbox；失败重试，存储成功回执后才写目录独立
-`storage-lifecycle-v1` delivery ACK。启用时目录的事件保留清理必须等该 ACK，写目录本身不等待存储 HTTP。
+`entity.saved/deleted/merged` outbox；失败重试，存储成功回执后才写目录独立
+`storage-lifecycle-v1` delivery ACK。启用时目录的事件保留清理必须等该 ACK。
 长期关闭后重新启用也会重做库存复核，不能依赖历史 outbox 仍然存在。
 
 内部 `POST /internal/catalog/lifecycle` 只接受专用服务凭据，必须由网关拒绝外部 `/internal/`，
 空密钥不注册内部接口。目录发送当前 canonical、完整历史 aliases 及各自版本、图片资产集合；
 存储拒绝过时版本和缺失已知别名的旧快照。删除撤所有别名的绑定，合并迁移全部文件用途并去重，
-旧别名图片资产继续保留。下架回草稿保留文件；TrackContent 是 Expression 收录，修改不撤文件绑定。
-普通图片编辑只撤已移除的 `cover_image` 绑定，不影响原档、音频等其他用途，也不会自动创建缺少授权的资产绑定。
+旧别名图片资产继续保留；TrackContent 是 Expression 收录，修改不撤文件绑定。
+`cover_image` 由正式目录事实统一管理：公开 bind、上传同时绑定、unbind 均不能直接修改该角色，返回
+`409 catalog_managed_binding`；其他文件用途保持独立管理。
 
-上传/重绑先于图片 Save，迁移 `000008` 的 `confirmed_at` 为这种间隙提供保护：重复 Bind 保留原绑定 ID、
-创建者和创建时间，但刷新确认时间；旧目录快照只撤确认时间早于该次目录写入的封面。
-存量确认时间从迁移时刻保守起算，旧实体图片绑定在目录下一次新写入后才按新快照撤销。
+工作副本保存通过 `POST /internal/catalog/assets/prepare` 预留私有引用。请求包含 `workspace_id`、
+`prepare`、`retain` 和 `references[{entity_id,asset_id,actor_ids,moderate_actor_id?}]`。新授权只允许当前
+认证保存者本人上传的 complete、hash_verified、未禁发且未进入回收的资产；存储管理员例外只能来自
+当前认证调用者的真实权限。重复引用保留最初授权者。合入前 `prepare=true` 仅确认同副本同目标已授权
+引用或已有正式封面绑定，不能凭 commit 作者列表给其他私人资产新授权；合并人不会替换原作者。
+此时图片仍不公开。合入成功后的生命周期消息使用 `cover_asset_ids` 原子创建或保留正式绑定，并撤销
+已移除的封面；未经预备授权的资产拒绝物化。绑定创建者采用私有授权记录中的真实保存者。
+
+迁移 `000011_catalog_asset_references` 的私有引用不参与公开读取。预留期为 48 小时；到期后 GC 通过
+`POST /internal/storage/asset-references` 向目录服务批量核对精确副本、条目、资产引用。当前副本引用
+续期，已提交历史永久保留，目录明确不存在才撤掉预留；目录不可达时保留。失败事务的临时预留因此
+能够回收，长时间未合入的提交或停机不会因租约超时丢失图片。候选与最终 GC 均检查私有引用，核对
+写回使用到期时间 CAS，避免旧否定回执删除并发保存的引用。
+
+协作者与 PR 审查者通过目录鉴权代理预览；目录调用
+`GET /internal/catalog/workspaces/{workspace_id}/entities/{entity_id}/assets/{asset_id}/content`，存储验证
+精确私有引用或同目标正式封面绑定，再返回原始字节，使用 `private, no-store`。匿名公开地址仍要求正式绑定。
+以上内部路由均仅接受同一个专用服务凭据，不接受用户令牌；网关必须拒绝外部 `/internal/`。
+
+迁移 `000008` 的 `confirmed_at` 保留旧快照的时间边界：旧目录快照不能撤销更晚物化的封面。
 目录身份在读取与写绑定之间已合并/删除时，返回 `409 binding_target_changed`，调用方重新读取身份再写。
 
 ## 数据库结构与迁移

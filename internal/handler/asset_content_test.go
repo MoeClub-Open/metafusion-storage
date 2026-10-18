@@ -2,14 +2,16 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/MoeclubM/metafusion-storage/internal/store"
+	"github.com/google/uuid"
 )
 
 // 1×1 透明 PNG：用例要验的是"发出去的就是原字节"，用真图片头让内容嗅探有东西可嗅。
@@ -36,12 +38,24 @@ func (h *uploadHarness) getContent(token, assetID string) *httptest.ResponseReco
 	return w
 }
 
-// bind 走真实绑定入口。
+// bind materializes an approved catalog cover through the private lifecycle.
 func (h *uploadHarness) bind(t *testing.T, token, assetID, entityID string) {
 	t.Helper()
-	body, _ := json.Marshal(map[string]any{"asset_id": assetID, "target_entity_id": entityID, "binding_role": "cover_image"})
-	if code, resp := h.do(token, http.MethodPost, "/api/storage/bind", string(body)); code != 200 {
-		t.Fatalf("绑定返回 %d（%s）", code, resp)
+	ctx := context.Background()
+	asset, err := h.db.Asset(ctx, assetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := store.CatalogAssetReferences{WorkspaceID: uuid.NewString(), References: []store.CatalogAssetReference{{EntityID: entityID, AssetID: assetID, ActorIDs: []string{asset.UploaderID}}}}
+	if err = h.db.RetainCatalogAssets(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	in.Prepare = true
+	if err = h.db.RetainCatalogAssets(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	if err = h.db.ApplyCatalogLifecycle(ctx, store.CatalogLifecycle{EntityID: entityID, Kind: "work", State: "active", Version: 1, UpdatedAt: time.Now(), CoverAssetIDs: []string{assetID}}); err != nil {
+		t.Fatal(err)
 	}
 }
 

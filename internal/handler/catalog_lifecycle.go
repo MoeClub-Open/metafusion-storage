@@ -23,6 +23,55 @@ func (h *Handler) registerCatalogLifecycle(r *gin.Engine) {
 	}
 	r.POST("/internal/catalog/lifecycle", h.catalogLifecycle)
 	r.GET("/internal/catalog/binding-targets", h.catalogBindingTargets)
+	r.POST("/internal/catalog/assets/prepare", h.catalogAssetsPrepare)
+	r.GET("/internal/catalog/workspaces/:workspaceID/entities/:entityID/assets/:assetID/content", h.catalogWorkspaceAssetContent)
+}
+
+func (h *Handler) catalogAssetsPrepare(c *gin.Context) {
+	if !h.authorizeCatalogLifecycle(c) {
+		return
+	}
+	var in store.CatalogAssetReferences
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxJSONBody)
+	dec := json.NewDecoder(c.Request.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		fail(c, 400, "invalid_payload")
+		return
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		fail(c, 400, "invalid_payload")
+		return
+	}
+	if !validID(in.WorkspaceID) || len(in.References) == 0 || len(in.References) > 10000 {
+		fail(c, 400, "invalid_payload")
+		return
+	}
+	seen := map[string]bool{}
+	for _, ref := range in.References {
+		key := ref.EntityID + ":" + ref.AssetID
+		if !validID(ref.EntityID) || !validID(ref.AssetID) || seen[key] || len(ref.ActorIDs) > 100 || (ref.ModerateActorID != "" && !validID(ref.ModerateActorID)) {
+			fail(c, 400, "invalid_payload")
+			return
+		}
+		seen[key] = true
+		for _, actor := range ref.ActorIDs {
+			if !validID(actor) {
+				fail(c, 400, "invalid_payload")
+				return
+			}
+		}
+	}
+	if err := h.db.RetainCatalogAssets(c.Request.Context(), in); err != nil {
+		if errors.Is(err, store.ErrInvalidCatalogAsset) {
+			fail(c, 400, "invalid_catalog_asset")
+			return
+		}
+		h.failStorageWrite(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func (h *Handler) authorizeCatalogLifecycle(c *gin.Context) bool {

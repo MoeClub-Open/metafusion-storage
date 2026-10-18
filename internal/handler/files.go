@@ -171,7 +171,15 @@ func (h *Handler) assetContent(c *gin.Context) {
 		fail(c, 404, "not_found")
 		return
 	}
+	h.serveAssetContent(c, asset, true)
+}
+
+func (h *Handler) serveAssetContent(c *gin.Context, asset store.Asset, cacheable bool) {
+	ctx := c.Request.Context()
 	etag := contentCacheHeaders(c, asset)
+	if !cacheable {
+		c.Header("Cache-Control", "private, no-store")
+	}
 	// 条件请求命中就到此为止：封面会被反复加载（列表滚回来、详情页重进、<img> 重排），
 	// 不接 304 的话每一次加载都要把原档从对象存储整份读一遍再发一遍字节。
 	//

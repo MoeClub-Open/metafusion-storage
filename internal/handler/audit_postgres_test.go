@@ -351,7 +351,7 @@ func TestAuditLogAgainstPostgres(t *testing.T) {
 	bindPayload, _ := json.Marshal(map[string]any{
 		"asset_id":         initiated.AssetID,
 		"target_entity_id": entityID,
-		"binding_role":     "cover_image",
+		"binding_role":     "scans",
 	})
 	w = h.do(owner, http.MethodPost, "/api/storage/bind", string(bindPayload), bindID)
 	if w.Code != http.StatusOK {
@@ -452,7 +452,7 @@ func TestAuditLogAgainstPostgres(t *testing.T) {
 		t.Fatalf("bind 行的 target 不符: %+v", bindRow)
 	}
 	bindChanges := h.changesOf(bindRow)
-	if bindChanges["asset_id"] != initiated.AssetID || bindChanges["binding_role"] != "cover_image" || bindChanges["target_entity_id"] != entityID {
+	if bindChanges["asset_id"] != initiated.AssetID || bindChanges["binding_role"] != "scans" || bindChanges["target_entity_id"] != entityID {
 		t.Fatalf("bind 行摘要不符: %#v", bindChanges)
 	}
 	unbindChanges := h.changesOf(unbindRow)
@@ -572,7 +572,7 @@ func TestAuditLogAgainstPostgresAuthRejectedWrites(t *testing.T) {
 	payload, _ := json.Marshal(map[string]any{
 		"asset_id":         uuid.NewString(),
 		"target_entity_id": uuid.NewString(),
-		"binding_role":     "cover_image",
+		"binding_role":     "scans",
 	})
 
 	cases := []struct {
@@ -637,7 +637,7 @@ func TestAuditLogAgainstPostgresAuthRejectedWritesWithoutIntrospector(t *testing
 	payload, _ := json.Marshal(map[string]any{
 		"asset_id":         uuid.NewString(),
 		"target_entity_id": uuid.NewString(),
-		"binding_role":     "cover_image",
+		"binding_role":     "scans",
 	})
 	id := h.requestID("auth-reject-no-introspector")
 	req := httptest.NewRequest(http.MethodPost, "/api/storage/bind", strings.NewReader(string(payload)))

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/MoeclubM/metafusion-storage/internal/store"
 	"github.com/google/uuid"
 )
 
@@ -50,7 +51,7 @@ func (h *uploadHarness) downloadRaw(token, assetID string) *httptest.ResponseRec
 }
 
 // uploadCover 传一份声明为 image/png 的位图、以 cover_image 绑到 coverEntity，返回资产 id 与原始字节。
-// 走的是真实入口（initiate → 本地流式接收即落定 → bind），因此 complete 与 hash_verified
+// 走上传入口，再通过私有目录生命周期物化封面，因此 complete 与 hash_verified
 // 都是服务端验过内容之后的结果，不是用例手写的状态。
 func uploadCover(t *testing.T, h *uploadHarness, owner, entity string) (string, []byte) {
 	t.Helper()
@@ -205,7 +206,11 @@ func TestSelfHostedCoverServesNothingWhilePending(t *testing.T) {
 	owner := h.token("11111111-1111-1111-1111-111111111111")
 	body := onePixelPNGBytes(t)
 	assetID := h.initiate(t, owner, "cover.png", sha256HexOf(body), int64(len(body)), 1)
-	h.bind(t, owner, assetID, coverEntity)
+	// Public writes and catalog prepare reject pending covers. Construct a
+	// storage-only inconsistent reference to exercise the read-side defense too.
+	if err := h.db.Bind(t.Context(), store.Binding{ID: uuid.NewString(), AssetID: assetID, TargetEntityID: coverEntity, TargetKind: "work", BindingRole: "cover_image", CreatedBy: "11111111-1111-1111-1111-111111111111"}); err != nil {
+		t.Fatal(err)
+	}
 	if got := h.asset(t, assetID); got.Status == "complete" {
 		t.Fatalf("前置条件不成立：这条资产应当还没落定（status=%s）", got.Status)
 	}

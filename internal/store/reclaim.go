@@ -65,7 +65,7 @@ func lockReclaimAsset(ctx context.Context, tx *sql.Tx, id, key string) (Asset, r
 	}
 	var state reclaimState
 	err = tx.QueryRowContext(ctx, "SELECT reclaim_deleting,unbound_since,"+
-		"EXISTS(SELECT 1 FROM storage.bindings WHERE asset_id=$1) FROM storage.assets WHERE id=$1", id).
+		"(EXISTS(SELECT 1 FROM storage.bindings WHERE asset_id=$1) OR EXISTS(SELECT 1 FROM storage.catalog_asset_references WHERE asset_id=$1)) FROM storage.assets WHERE id=$1", id).
 		Scan(&state.deleting, &state.unbound, &state.bound)
 	return a, state, err
 }

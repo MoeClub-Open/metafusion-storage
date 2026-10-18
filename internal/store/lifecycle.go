@@ -46,6 +46,7 @@ func (s *Store) UnboundCandidates(ctx context.Context, before time.Time, limit i
 	rows, err := s.db.QueryContext(ctx, "SELECT "+assetCols+" FROM storage.assets a"+
 		" WHERE a.status='complete' AND NOT a.blocked AND a.unbound_since <= $1"+
 		" AND NOT EXISTS (SELECT 1 FROM storage.bindings b WHERE b.asset_id=a.id)"+
+		" AND NOT EXISTS (SELECT 1 FROM storage.catalog_asset_references r WHERE r.asset_id=a.id)"+
 		" ORDER BY a.unbound_since, a.id LIMIT $2", before, limit)
 	if err != nil {
 		return nil, err

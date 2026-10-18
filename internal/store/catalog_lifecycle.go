@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/lib/pq"
 )
 
@@ -100,7 +101,7 @@ func checkCatalogBindingTarget(ctx context.Context, tx *sql.Tx, b *Binding) erro
 }
 
 // ApplyCatalogLifecycle migrates all roles across a merge, withdraws all roles
-// for deletion, and reconciles only cover_image on live/draft entities. Asset
+// for deletion, and reconciles only cover_image on active entities. Asset
 // unbound timestamps are maintained by storage-owned triggers in migration 6.
 func (s *Store) ApplyCatalogLifecycle(ctx context.Context, state CatalogLifecycle) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -174,8 +175,8 @@ func (s *Store) ApplyCatalogLifecycle(ctx context.Context, state CatalogLifecycl
 	// Lock assets in deterministic order, sharing Bind/GC's row boundary. A
 	// last-reference deletion cannot race completed-asset reclamation.
 	rows, err = tx.QueryContext(ctx, `SELECT a.id FROM storage.assets a
-		WHERE EXISTS(SELECT 1 FROM storage.bindings b WHERE b.asset_id=a.id AND b.target_entity_id=ANY($1::uuid[]))
-		ORDER BY a.id FOR UPDATE OF a`, pq.Array(ids))
+		WHERE a.id=ANY($2::uuid[]) OR EXISTS(SELECT 1 FROM storage.bindings b WHERE b.asset_id=a.id AND b.target_entity_id=ANY($1::uuid[]))
+		ORDER BY a.id FOR UPDATE OF a`, pq.Array(ids), pq.Array(state.CoverAssetIDs))
 	if err != nil {
 		return err
 	}
@@ -205,8 +206,35 @@ func (s *Store) ApplyCatalogLifecycle(ctx context.Context, state CatalogLifecycl
 				pq.Array(state.Aliases), state.EntityID, state.Kind)
 		}
 		if err == nil {
-			// Upload binds before catalog Save. A fresh binding created after
-			// the snapshot must survive until the matching Save can reference it.
+			// Only merged facts create public cover references. Private workspace
+			// references prove an authenticated asset owner prepared this target.
+			for _, assetID := range state.CoverAssetIDs {
+				var existing bool
+				if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM storage.bindings WHERE asset_id=$1 AND target_entity_id=$2 AND binding_role='cover_image')`, assetID, state.EntityID).Scan(&existing); err != nil {
+					break
+				}
+				if existing {
+					continue
+				}
+				var actor string
+				err = tx.QueryRowContext(ctx, `SELECT r.actor_id::text FROM storage.catalog_asset_references r JOIN storage.assets a ON a.id=r.asset_id
+					WHERE r.entity_id=ANY($1::uuid[]) AND r.asset_id=$2 AND r.prepared AND a.status='complete' AND a.hash_verified AND NOT a.blocked AND NOT a.reclaim_deleting ORDER BY r.created_at LIMIT 1`, pq.Array(ids), assetID).Scan(&actor)
+				if errors.Is(err, sql.ErrNoRows) {
+					err = ErrInvalidCatalogAsset
+					break
+				}
+				if err != nil {
+					break
+				}
+				_, err = tx.ExecContext(ctx, `INSERT INTO storage.bindings(id,asset_id,target_entity_id,target_kind,binding_role,created_by,confirmed_at)
+					VALUES($1,$2,$3,$4,'cover_image',$5,$6) ON CONFLICT(asset_id,target_entity_id,binding_role) DO NOTHING`, uuid.NewString(), assetID, state.EntityID, state.Kind, actor, state.UpdatedAt)
+				if err != nil {
+					break
+				}
+			}
+		}
+		if err == nil {
+			// A newer materialization must survive an older retried snapshot.
 			_, err = tx.ExecContext(ctx, `DELETE FROM storage.bindings WHERE target_entity_id=$1 AND binding_role='cover_image'
 				AND NOT(asset_id=ANY($2::uuid[])) AND confirmed_at <= $3`, state.EntityID, pq.Array(state.CoverAssetIDs), state.UpdatedAt)
 		}

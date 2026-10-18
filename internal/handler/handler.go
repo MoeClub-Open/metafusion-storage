@@ -240,6 +240,10 @@ func (h *Handler) initiateUpload(c *gin.Context) {
 		fail(c, 400, "invalid_binding_role")
 		return
 	}
+	if role == "cover_image" && in.TargetEntityID != "" {
+		fail(c, http.StatusConflict, "catalog_managed_binding")
+		return
+	}
 	if in.MimeType == "" {
 		in.MimeType = "application/octet-stream"
 	}
@@ -670,6 +674,10 @@ func (h *Handler) bind(c *gin.Context) {
 		fail(c, 400, "invalid_binding_role")
 		return
 	}
+	if role == "cover_image" {
+		fail(c, http.StatusConflict, "catalog_managed_binding")
+		return
+	}
 	p := auth.Current(c)
 	ctx := c.Request.Context()
 	asset, err := h.db.Asset(ctx, in.AssetID)
@@ -738,6 +746,10 @@ func (h *Handler) unbind(c *gin.Context) {
 	// 绑定创建者、文件上传者或管理员可以解绑：绑定是"关系"，纠错不应被上传者身份卡住。
 	if !canManageAsset(p, asset.UploaderID) && b.CreatedBy != p.ID {
 		fail(c, 403, "forbidden")
+		return
+	}
+	if b.BindingRole == "cover_image" {
+		fail(c, http.StatusConflict, "catalog_managed_binding")
 		return
 	}
 	// 快照在删除前取：审计要能回答"删掉的是哪一条关系"；被拒的尝试同样因此带上 target。

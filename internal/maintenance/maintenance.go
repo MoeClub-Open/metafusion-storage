@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/MoeclubM/metafusion-storage/internal/catalog"
 	"github.com/MoeclubM/metafusion-storage/internal/config"
 	"github.com/MoeclubM/metafusion-storage/internal/objects"
 	"github.com/MoeclubM/metafusion-storage/internal/store"
@@ -51,6 +52,9 @@ type CleanupReport struct {
 // 对象操作失败保留行供重试；删除阶段的行不能再次绑定/激活，崩溃亦不能恢复成缺字节的活跃资产。
 func RunCleanup(ctx context.Context, db *store.Store, objs *objects.Store, cfg config.Config) (CleanupReport, error) {
 	var rep CleanupReport
+	if err := db.SweepExpiredCatalogAssetReferences(ctx, catalog.New(cfg.CatalogURL).AssetReferences(cfg.CatalogLifecycleSecret)); err != nil {
+		return rep, err
+	}
 	now := time.Now()
 	staleBefore := now.Add(-store.ReclaimClaimTimeout)
 	candidates, err := db.ReclaimCandidates(ctx, now, staleBefore, cleanupBatch)
