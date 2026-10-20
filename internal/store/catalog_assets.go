@@ -13,10 +13,11 @@ var ErrInvalidCatalogAsset = errors.New("invalid_catalog_asset")
 // ActorIDs are authenticated authors fixed by catalog, never client claims.
 // ModerateActorID is set only for the current caller with storage moderation.
 type CatalogAssetReference struct {
-	EntityID        string   `json:"entity_id"`
-	AssetID         string   `json:"asset_id"`
-	ActorIDs        []string `json:"actor_ids"`
-	ModerateActorID string   `json:"moderate_actor_id,omitempty"`
+	SourceWorkspaceID string   `json:"source_workspace_id,omitempty"`
+	EntityID          string   `json:"entity_id"`
+	AssetID           string   `json:"asset_id"`
+	ActorIDs          []string `json:"actor_ids"`
+	ModerateActorID   string   `json:"moderate_actor_id,omitempty"`
 }
 
 type CatalogAssetReferences struct {
@@ -74,6 +75,17 @@ func (s *Store) RetainCatalogAssets(ctx context.Context, in CatalogAssetReferenc
 		}
 		if err == nil {
 			actor = retainedActor
+		}
+		if actor == "" {
+			// Only the authenticated catalog service can name a source copy;
+			// catalog first verifies access to its frozen commit. The transfer
+			// retains the same entity/asset identity and the original saver.
+			if ref.SourceWorkspaceID != "" {
+				err = tx.QueryRowContext(ctx, `SELECT actor_id::text FROM storage.catalog_asset_references WHERE workspace_id=$1 AND entity_id=$2 AND asset_id=$3`, ref.SourceWorkspaceID, ref.EntityID, ref.AssetID).Scan(&actor)
+				if err != nil && !errors.Is(err, sql.ErrNoRows) {
+					return err
+				}
+			}
 		}
 		if actor == "" {
 			// A checkout can retain an already-published cover on its own target;

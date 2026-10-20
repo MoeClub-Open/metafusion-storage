@@ -51,7 +51,7 @@ func (h *Handler) catalogAssetsPrepare(c *gin.Context) {
 	seen := map[string]bool{}
 	for _, ref := range in.References {
 		key := ref.EntityID + ":" + ref.AssetID
-		if !validID(ref.EntityID) || !validID(ref.AssetID) || seen[key] || len(ref.ActorIDs) > 100 || (ref.ModerateActorID != "" && !validID(ref.ModerateActorID)) {
+		if ref.SourceWorkspaceID != "" && !validID(ref.SourceWorkspaceID) || !validID(ref.EntityID) || !validID(ref.AssetID) || seen[key] || len(ref.ActorIDs) > 100 || (ref.ModerateActorID != "" && !validID(ref.ModerateActorID)) {
 			fail(c, 400, "invalid_payload")
 			return
 		}

@@ -24,6 +24,40 @@ func catalogAssetReferenceState(t *testing.T, s *Store, ctx context.Context, wor
 	return actor, prepared, expires
 }
 
+func TestCatalogAssetsFrozenSourceTransferOnPostgres(t *testing.T) {
+	s, ctx := reclaimTestStore(t)
+	a := completeReclaimAsset(t, s, ctx)
+	source, entity, reader := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	in := catalogAssetInput(source, entity, a.ID, a.UploaderID)
+	if err := s.RetainCatalogAssets(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	// Catalog verified an immutable source snapshot. A delayed GC confirmation
+	// must not invalidate that proof while the bytes are still ready.
+	if _, err := s.db.ExecContext(ctx, `UPDATE storage.catalog_asset_references SET expires_at=now()-interval '1 second' WHERE workspace_id=$1`, source); err != nil {
+		t.Fatal(err)
+	}
+	fork := catalogAssetInput(uuid.NewString(), entity, a.ID, reader)
+	fork.References[0].SourceWorkspaceID = source
+	if err := s.RetainCatalogAssets(ctx, fork); err != nil {
+		t.Fatal("verified frozen source could not be transferred", err)
+	}
+	actor, _, _ := catalogAssetReferenceState(t, s, ctx, fork.WorkspaceID, entity, a.ID)
+	if actor != a.UploaderID {
+		t.Fatal("transfer changed original saver")
+	}
+	fork.WorkspaceID = uuid.NewString()
+	fork.References[0].EntityID = uuid.NewString()
+	if err := s.RetainCatalogAssets(ctx, fork); !errors.Is(err, ErrInvalidCatalogAsset) {
+		t.Fatal("source authorized a different entity", err)
+	}
+	fork.References[0].EntityID = entity
+	fork.References[0].SourceWorkspaceID = uuid.NewString()
+	if err := s.RetainCatalogAssets(ctx, fork); !errors.Is(err, ErrInvalidCatalogAsset) {
+		t.Fatal("unknown source authorized a transfer", err)
+	}
+}
+
 func TestCatalogAssetsOwnershipAndWorkspaceIsolationOnPostgres(t *testing.T) {
 	s, ctx := reclaimTestStore(t)
 	a := completeReclaimAsset(t, s, ctx)
