@@ -75,9 +75,12 @@ func New(ctx context.Context, cfg config.Config) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	signer, err := minio.New(cfg.S3PublicEndpoint, opts)
-	if err != nil {
-		return nil, err
+	var signer *minio.Client
+	if cfg.S3PublicEndpoint != "" {
+		signer, err = minio.New(cfg.S3PublicEndpoint, opts)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// 最小权限：STORAGE_S3_SKIP_BUCKET_ENSURE=true 时跳过建桶/查桶，只用仅目标桶数据操作
 	// 的服务凭据启动（s3:GetObject/PutObject/DeleteObject/AbortMultipart 等，不含
@@ -123,6 +126,10 @@ func ensureBucket(ctx context.Context, client *minio.Client, bucket string) erro
 // Local 表示当前是本地对象模式：没有预签名，直传走服务端流式接收端点。
 func (s *Store) Local() bool { return s.local }
 
+// DirectTransfer requires an explicitly configured public signing endpoint.
+// Internal-only S3 still stores objects remotely; HTTP transfers go through this service.
+func (s *Store) DirectTransfer() bool { return s.signer != nil }
+
 // KeyFor 生成内容寻址的对象键：同一 sha256 恒定映射同一键。
 // 文件名只作为可读后缀，不参与身份，避免同名不同内容互相覆盖。
 func (s *Store) KeyFor(sha256hex, name string) string {
@@ -164,7 +171,7 @@ func (s *Store) NewParts(ctx context.Context, key, mime string, partCount int) (
 
 // PresignParts 签发直传地址：uploadID 为空表示单次 PUT，否则逐片签发 UploadPart 地址。
 func (s *Store) PresignParts(ctx context.Context, key, mime string, partCount int, uploadID string) ([]string, error) {
-	if s.local {
+	if !s.DirectTransfer() {
 		return nil, nil
 	}
 	if uploadID == "" {
@@ -228,7 +235,7 @@ func (s *Store) AbortUpload(ctx context.Context, key, uploadID string) error {
 // （见 download 的注释）。立即禁发需求用短期签名或走鉴权代理的 content 口。
 func (s *Store) PresignDownload(ctx context.Context, key, fileName string) (string, time.Time, error) {
 	expires := time.Now().Add(s.ttl)
-	if s.local {
+	if !s.DirectTransfer() {
 		return "", expires, nil
 	}
 	disposition := "attachment"
@@ -308,7 +315,7 @@ func (s *Store) Remove(ctx context.Context, key string) error {
 	return s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{})
 }
 
-// Open 打开对象内容，用于服务端校验哈希或本地模式下载。
+// Open 打开对象内容，用于服务端校验哈希与流式下载。
 func (s *Store) Open(ctx context.Context, key string) (io.ReadSeekCloser, int64, error) {
 	if s.local {
 		f, err := os.Open(filepath.Join(s.root, filepath.FromSlash(key)))

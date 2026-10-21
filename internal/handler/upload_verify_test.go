@@ -57,6 +57,10 @@ func newUploadHarness(t *testing.T, useS3 bool) *uploadHarness {
 
 // newUploadHarnessWith 支持带上回读校验的大小上限（MB，0 为不限制）。
 func newUploadHarnessWith(t *testing.T, useS3 bool, verifyMaxMB int) *uploadHarness {
+	return newUploadHarnessConfig(t, useS3, verifyMaxMB, nil)
+}
+
+func newUploadHarnessConfig(t *testing.T, useS3 bool, verifyMaxMB int, configure func(*config.Config)) *uploadHarness {
 	t.Helper()
 	db := testutil.Database(t)
 	st, err := store.Open(context.Background(), testutil.DSN(t))
@@ -101,6 +105,9 @@ func newUploadHarnessWith(t *testing.T, useS3 bool, verifyMaxMB int) *uploadHarn
 	} else {
 		h.local = true
 	}
+	if configure != nil {
+		configure(&cfg)
+	}
 	objs, err := objects.New(ctx, cfg)
 	if err != nil {
 		t.Fatalf("objects.New: %v", err)
@@ -130,6 +137,56 @@ func newUploadHarnessWith(t *testing.T, useS3 bool, verifyMaxMB int) *uploadHarn
 	h.r = gin.New()
 	New(st, objs, catalog.New(cat.URL), newVerifier(t, jwks.URL), cfg).Register(h.r)
 	return h
+}
+
+func TestInternalS3TransfersDoNotExposeSigningEndpoint(t *testing.T) {
+	h := newUploadHarnessConfig(t, true, 0, func(cfg *config.Config) { cfg.S3PublicEndpoint = "" })
+	token := h.token("11111111-2222-4333-8444-555555555555")
+	content := "internal S3 streamed content"
+	digest := sha256.Sum256([]byte(content))
+	body, _ := json.Marshal(map[string]any{
+		"file_name": "internal.txt", "file_size": len(content),
+		"sha256_hash": hex.EncodeToString(digest[:]), "part_count": 3,
+	})
+	code, resp := h.do(token, http.MethodPost, "/api/storage/upload/initiate", string(body))
+	var out struct {
+		AssetID   string   `json:"asset_id"`
+		DirectURL string   `json:"direct_upload_url"`
+		Presigned []string `json:"presigned_urls"`
+		UploadID  string   `json:"upload_id"`
+	}
+	if code != 200 || json.Unmarshal([]byte(resp), &out) != nil || out.AssetID == "" ||
+		out.DirectURL != "/api/storage/upload/stream/"+out.AssetID || len(out.Presigned) != 0 || out.UploadID != "" {
+		t.Fatalf("internal S3 must return only a service upload URL: %d %s", code, resp)
+	}
+	if code, resp = h.do(token, http.MethodPut, out.DirectURL, content); code != 200 {
+		t.Fatalf("stream upload failed: %d %s", code, resp)
+	}
+	if code, resp = h.complete(token, out.AssetID); code != 200 {
+		t.Fatalf("complete failed: %d %s", code, resp)
+	}
+	asset := h.asset(t, out.AssetID)
+	if !h.s3.hasObject(asset.ObjectKey) {
+		t.Fatal("S3 upload silently switched to local storage")
+	}
+	path := "/api/storage/download/" + out.AssetID
+	if code, resp = h.do(token, http.MethodGet, path, ""); code != 200 || resp != content {
+		t.Fatalf("download must return bytes, not internal signed URLs: %d %s", code, resp)
+	}
+	if code, resp = h.do("", http.MethodGet, path, ""); code != 404 {
+		t.Fatalf("unbound private asset leaked to anonymous caller: %d %s", code, resp)
+	}
+	h.bind(t, token, out.AssetID, "01a0a88d-cd52-745a-9266-b62aea6f8296")
+	if code, resp = h.do("", http.MethodGet, path, ""); code != 200 || resp != content {
+		t.Fatalf("public S3 download must return bytes to anonymous caller: %d %s", code, resp)
+	}
+	_, err := h.db.DB().Exec(`UPDATE storage.assets SET blocked=true WHERE id=$1`, out.AssetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, resp = h.do("", http.MethodGet, path, ""); code != 404 {
+		t.Fatalf("blocked asset still downloadable: %d %s", code, resp)
+	}
 }
 
 // token 用给定 subject 签一个普通用户令牌：存储侧只认令牌里的 id 作为上传者身份。

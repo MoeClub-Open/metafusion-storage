@@ -22,3 +22,11 @@ func TestLoadRequiresExplicitDatabaseURL(t *testing.T) {
 		t.Fatalf("DatabaseURL = %q，期望显式配置", got)
 	}
 }
+
+func TestInternalEndpointIsNeverUsedAsPublicEndpoint(t *testing.T) {
+	t.Setenv("STORAGE_S3_ENDPOINT", "http://rustfs:9000")
+	t.Setenv("STORAGE_S3_PUBLIC_ENDPOINT", "")
+	if got := Load().S3PublicEndpoint; got != "" {
+		t.Fatalf("internal endpoint exposed for signing: %q", got)
+	}
+}

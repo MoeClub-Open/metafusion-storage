@@ -41,9 +41,9 @@ JWKS 拉取**刻意不走**这套执行器：公钥拉取自带 10 分钟缓存�
 | GET | `/assets` | 审核者 | 全站资产浏览：`limit`（缺省 50、上限 100）、`offset`、`status`（`pending` / `complete`）、`name`（文件名过滤，最多 100 字节）；返回 `assets`、`limit`、`offset`、`has_more` |
 | GET | `/bindings` | 审核者 | 全站绑定浏览：同样使用 `limit` / `offset`，返回 `bindings`、`limit`、`offset`、`has_more` |
 | GET | `/assets/{id}` | 可读 | 文件元数据 + 绑定列表 |
-| GET | `/assets/{id}/content` | 可读（允许匿名） | **原样**内联分发对象内容（不转码）：给目录数据里需要长期引用、能被 `<img>` 直接加载的地址用；`download` 在对象存储模式下只回预签名地址（会过期、Host 是对象存储端点），不能当稳定地址。位图等展示类型走 `inline`，脚本可执行类型走 `attachment`；响应带 `ETag`（内容摘要）并支持 `If-None-Match` → `304` |
+| GET | `/assets/{id}/content` | 可读（允许匿名） | **原样**内联分发对象内容（不转码）：给目录数据里需要长期引用、能被 `<img>` 直接加载的地址用；`download` 在配置 S3 公开端点后返回会过期的预签名地址，不能当稳定地址。位图等展示类型走 `inline`，脚本可执行类型走 `attachment`；响应带 `ETag`（内容摘要）并支持 `If-None-Match` → `304` |
 | GET | `/entities/{id}/files` | 实体可见 | 「这个介质/轨道/表达上挂了哪些文件」入口 |
-| GET | `/download/{asset_id}` | 可读 | 对象存储模式返回预签名下载地址；本地模式直接流式下发 |
+| GET | `/download/{asset_id}` | 可读 | 显式配置 S3 公开端点时返回预签名下载地址；否则由服务端流式下发 |
 | POST | `/verify-hash` | 可读 / 按 asset 校验需登录 | 只给 sha256 = 秒传探测（只认 `hash_verified=true` 的资产）；给 asset_id = 读回对象重算摘要并与声明比对，同样受回读上限约束 |
 | GET | `/stats` | 审核者 | 完成态文件数与占用字节、待完成数、禁发数 |
 
@@ -92,7 +92,7 @@ JWKS 拉取**刻意不走**这套执行器：公钥拉取自带 10 分钟缓存�
 
 ### 签名撤销窗口
 
-对象存储模式的 `download` 返回预签名地址，有效期 `STORAGE_PRESIGN_TTL_MINUTES`（默认 **120 分钟**）：
+显式配置 `STORAGE_S3_PUBLIC_ENDPOINT` 后，`download` 返回预签名地址，有效期 `STORAGE_PRESIGN_TTL_MINUTES`（默认 **120 分钟**）：
 签发出的地址在有效期内持续有效，**事后改禁发位/解绑拦不住它**——那是对象存储与签发方的直接约定。
 因此不要宣称"已禁发"等于"已阻断一切访问"。要求立即禁发的分发走两条路：调小预签名有效期
 （窗口按分钟收敛），或走鉴权代理 `/assets/{id}/content`（每次请求重新鉴权，无残留窗口）。
@@ -102,7 +102,7 @@ JWKS 拉取**刻意不走**这套执行器：公钥拉取自带 10 分钟缓存�
 | 探针 | 语义 |
 | --- | --- |
 | `GET /health` | 进程存活 |
-| `GET /ready` | **浅探针**：只探 PostgreSQL（2s 上限，毫秒级返回），编排按固定间隔打它 |
+| `GET /ready` | **浅探针**：只探 PostgreSQL（2s 上限，毫秒级返回），仅返回 `status`，编排按固定间隔打它 |
 | `GET /ready?deep=1` | **深探针**：在浅探针之上并发探 `CATALOG_URL` 与 `AUTH_URL` 的 `/ready`（总预算 3s），响应体多一项 `"upstreams":[{name,status,breaker,reason,latency_ms}]` |
 
 深探针回答的是"依赖全绿吗"：任一上游不是 `ready` 时就回 `503` 且 `status:"degraded"`，
@@ -165,7 +165,7 @@ JWKS 拉取**刻意不走**这套执行器：公钥拉取自带 10 分钟缓存�
 | `DATABASE_URL` | **必填** | PostgreSQL 连接串，使用存储域独立数据库身份；为空即拒绝启动，不读取 `DB_*` |
 | `STORAGE_ROOT` | `./storage-data` | 本地对象模式根目录与直传暂存目录 |
 | `STORAGE_S3_ENDPOINT` | 空 | 为空即本地对象模式（无需 RustFS） |
-| `STORAGE_S3_PUBLIC_ENDPOINT` | 同内部端点 | 客户端直传使用的对外地址。SigV4 覆盖 Host，必须用浏览器可达的地址签发，否则反代后签名校验失败 |
+| `STORAGE_S3_PUBLIC_ENDPOINT` | 空 | 显式配置后启用预签名直传/下载，SigV4 覆盖 Host，须使用客户端可达的地址。留空时 S3 仍负责保存对象，上传/下载由本服务流式中转，不将内部端点用于签名 |
 | `STORAGE_S3_ACCESS_KEY` / `_SECRET_KEY` / `_BUCKET` / `_TLS` | — | 对象存储凭据与桶（旧名 `ARCHIVE_S3_*` 同义） |
 | `STORAGE_JWKS_URL` | `http://auth:8081/api/oidc/jwks` | 验签公钥来源：账号服务是唯一签发方 |
 | `AUTH_URL` | 空 | 账号服务地址：PAT 内省（`POST /api/auth/tokens/introspect`）及健康探针；留空时 PAT 一律 `503 auth_unavailable` |

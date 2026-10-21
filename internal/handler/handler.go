@@ -387,10 +387,10 @@ func (h *Handler) initiateUpload(c *gin.Context) {
 	c.JSON(200, resp)
 }
 
-// presign 签发直传地址：分片上传建立（或复用）分片会话，本地对象模式返回服务端接收地址。
+// presign 仅在配置公开端点时签发直传地址，否则返回服务端接收地址。
 func (h *Handler) presign(ctx context.Context, asset store.Asset, partCount int, fresh bool) (initiateResponse, error) {
 	resp := initiateResponse{AssetID: asset.ID, ObjectKey: asset.ObjectKey, ExpiresAt: time.Now().Add(h.cfg.PresignTTL)}
-	if h.objects.Local() {
+	if !h.objects.DirectTransfer() {
 		resp.DirectUploadURL = "/api/storage/upload/stream/" + asset.ID
 		return resp, nil
 	}

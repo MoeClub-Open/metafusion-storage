@@ -186,7 +186,7 @@ func main() {
 			return
 		}
 		if c.Query("deep") != "1" {
-			c.JSON(http.StatusOK, gin.H{"status": "ready", "dependencies": []string{"postgres"}})
+			c.JSON(http.StatusOK, gin.H{"status": "ready"})
 			return
 		}
 		// 总预算 3s 由 ProbeAll 兜住：深探针不能被测不通的上游拖成慢探针。
@@ -200,7 +200,7 @@ func main() {
 				break
 			}
 		}
-		c.JSON(code, gin.H{"status": status, "dependencies": []string{"postgres"}, "upstreams": results})
+		c.JSON(code, gin.H{"status": status, "upstreams": results})
 	})
 
 	// 刻意不设 ReadTimeout/WriteTimeout：大文件直传与本地对象模式下的整份下发

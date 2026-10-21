@@ -22,7 +22,7 @@ type Config struct {
 	// S3Endpoint 服务端访问对象存储的地址；为空即本地对象模式（无需 RustFS 也能开发）。
 	S3Endpoint string
 	// S3PublicEndpoint 客户端直传时使用的对外地址：预签名 URL 的 host 参与签名，
-	// 因此必须用浏览器可达的地址签发，否则反代后签名校验失败。
+	// 因此必须用浏览器可达的地址签发；留空表示经本服务流式传输，不签发内部地址。
 	S3PublicEndpoint string
 	S3AccessKey      string
 	S3SecretKey      string
@@ -123,9 +123,6 @@ func Load() Config {
 	}
 	if c.PendingTTLHours <= 0 {
 		c.PendingTTLHours = 72
-	}
-	if c.S3PublicEndpoint == "" {
-		c.S3PublicEndpoint = c.S3Endpoint
 	}
 	return c
 }

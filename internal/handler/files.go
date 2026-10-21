@@ -375,7 +375,7 @@ func (h *Handler) download(c *gin.Context) {
 		return
 	}
 	c.Header("Cache-Control", "private, no-store")
-	if !h.objects.Local() {
+	if h.objects.DirectTransfer() {
 		// 撤销窗口：签发出的 URL 在 PresignTTL 内（默认 120 分钟）持续有效，
 		// 数据库改 blocked/解绑拦不住它——那是对象存储与签发方的直接约定。
 		// 要求立即禁发的分发走短期签名（调小 STORAGE_PRESIGN_TTL_MINUTES）或鉴权代理
@@ -395,7 +395,7 @@ func (h *Handler) download(c *gin.Context) {
 		})
 		return
 	}
-	// 本地对象模式：没有可签名对象存储，直接由本服务流式下发。
+	// 本地对象或仅内部可达的 S3：直接由本服务流式下发，不暴露内部端点。
 	obj, size, err := h.objects.Open(ctx, asset.ObjectKey)
 	if err != nil {
 		h.objectReadFailed(c, asset, err)
