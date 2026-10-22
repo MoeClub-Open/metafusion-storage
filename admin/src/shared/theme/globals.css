@@ -5,9 +5,8 @@
  *//* 配色与表面色调的变量块由 scripts/gen-theme.mjs 生成（唯一来源见 scripts/theme-palette.mjs） */
 @import "./theme.generated.css";
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@config "../../../tailwind.config.ts";
 
 /* 这里曾有一条指向 fonts.googleapis.com 的 @import（Inter / JetBrains Mono / Noto …）。
    它从来没有生效过：postcss 把上面 @import "./theme.generated.css" 内联在本行之前，产出 CSS 里这条
