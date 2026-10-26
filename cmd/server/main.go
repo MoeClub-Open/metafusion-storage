@@ -133,6 +133,7 @@ func main() {
 		// PAT（mfp_ 前缀）走内省端点
 		// POST /api/auth/tokens/introspect，结果进程内缓存 60 秒（= 吊销窗口），见 internal/auth/pat.go。
 		verifier.SetPAT(patIntrospector)
+		verifier.SetCredentialsChecker(auth.NewCredentialsChecker(cfg.AuthURL))
 	} else {
 		log.Print("AUTH_URL is not configured: personal access tokens (mfp_ prefix) will be rejected with 503 auth_unavailable")
 	}
