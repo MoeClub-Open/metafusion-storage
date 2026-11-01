@@ -10,6 +10,7 @@ test("embedded workspace validates its host, synchronizes preferences and cleans
       else delete globalThis[key];
     }
   });
+  const themes = [];
   const messages = [], locales = [], exits = [], attributes = new Map(), windowEvents = new Map(), documentEvents = new Map();
   const parent = { location: { origin: "https://site.invalid", pathname: "/admin", assign: (url) => exits.push(url) }, postMessage: (message, origin) => messages.push({ message, origin }) };
   const windowMock = {
@@ -31,7 +32,7 @@ test("embedded workspace validates its host, synchronizes preferences and cleans
   });
   assert.equal(isAdminWorkspaceEmbedded(), true);
   windowMock.name = "other";
-  assert.equal(connectAdminWorkspace((value) => locales.push(value)), null);
+  assert.equal(connectAdminWorkspace((value) => locales.push(value), (value) => themes.push(value)), null);
   windowMock.name = "metafusion-admin-storage";
   parent.location.origin = "https://foreign.invalid";
   assert.equal(isAdminWorkspaceEmbedded(), false);
@@ -39,11 +40,11 @@ test("embedded workspace validates its host, synchronizes preferences and cleans
   parent.location.pathname = "/home";
   assert.equal(isAdminWorkspaceEmbedded(), false);
   parent.location.pathname = "/admin";
-  const disconnect = connectAdminWorkspace((value) => locales.push(value));
+  const disconnect = connectAdminWorkspace((value) => locales.push(value), (value) => themes.push(value));
   assert.ok(disconnect);
   assert.deepEqual(messages[0], { message: { channel: "metafusion.admin.v1", workspace: "storage", type: "ready", history: "replace", href: "/admin/storage/?q=a#section" }, origin: "https://site.invalid" });
   const receive = windowEvents.get("message");
-  const data = { channel: "metafusion.admin.v1", workspace: "storage", type: "preferences", locale: "ja-JP", mode: "light", accent: "blue", tone: "slate" };
+  const data = { channel: "metafusion.admin.v1", workspace: "storage", type: "preferences", locale: "ja-JP", mode: "light", accent: "blue", tone: "cool", pattern: "dots" };
   const event = { source: parent, origin: "https://site.invalid", data };
   receive({ ...event, source: {} });
   receive({ ...event, origin: "https://foreign.invalid" });
@@ -52,9 +53,7 @@ test("embedded workspace validates its host, synchronizes preferences and cleans
   assert.equal(locales.length, 0);
   receive(event);
   assert.deepEqual(locales, ["ja-JP"]);
-  assert.equal(attributes.get("data-theme-mode"), "light");
-  assert.equal(attributes.get("data-theme-accent"), "blue");
-  assert.equal(attributes.get("data-theme-tone"), "slate");
+  assert.deepEqual(themes, [{ mode: "light", accent: "blue", tone: "cool", pattern: "dots" }]);
   announceAdminNavigation();
   assert.equal(messages.at(-1).message.type, "navigate");
   assert.equal(messages.at(-1).message.history, "replace");
@@ -82,6 +81,6 @@ test("embedded workspace validates its host, synchronizes preferences and cleans
   assert.equal(windowEvents.size, 0);
   assert.equal(documentEvents.size, 0);
   windowMock.parent = windowMock;
-  assert.equal(connectAdminWorkspace(() => {}), null);
+  assert.equal(connectAdminWorkspace(() => {}, () => {}), null);
   assert.equal(requestAdminWorkspaceLogin(), false);
 });

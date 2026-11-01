@@ -1,4 +1,7 @@
 "use client";
+
+import { useTheme } from "@/lib/themeContext";
+import { ThemePicker } from "./ThemePicker";
 // 应用外壳：顶部（应用标识 + 当前身份 + 语言切换）、左侧导航、内容区。
 // 与主站同域同路径前缀，因此语言与主题沿用同一套 cookie / localStorage 口径。
 import React, { useEffect, useRef, useState } from "react";
@@ -22,12 +25,13 @@ const NAV = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { t, setLocale } = useI18n();
+  const { setTheme } = useTheme();
   const [embedded, setEmbedded] = useState(false);
   useEffect(() => {
-    const disconnect = connectAdminWorkspace(setLocale);
+    const disconnect = connectAdminWorkspace(setLocale, setTheme);
     setEmbedded(disconnect !== null);
     return disconnect ?? undefined;
-  }, [setLocale]);
+  }, [setLocale, setTheme]);
   const { state, can } = useSession();
   const pathname = usePathname();
   const router = useRouter();
@@ -52,6 +56,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="flex shrink-0 items-center gap-2">
             <LocaleMenu />
             <ThemeModeSwitcher />
+            <ThemePicker />
             {state.status === "ready" ? <span className="hidden max-w-[9rem] truncate rounded border border-primary/30 bg-primary/20 px-2 py-0.5 font-mono text-xs text-primary sm:inline-flex" title={state.user.username}>{state.user.username}</span> : null}
           </div>
         </div>
@@ -112,7 +117,7 @@ function LocaleMenu() {
     return () => { document.removeEventListener("mousedown", onPointer); document.removeEventListener("keydown", onKey); };
   }, [open]);
   return <div className="relative" ref={container}>
-    <button type="button" aria-label={t("common.language")} title={t("common.language")} aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen(!open)} className="grid h-9 w-9 place-items-center rounded-full border border-line bg-surfaceSubtle text-text-body hover:bg-surfaceHover"><span aria-hidden="true">文</span></button>
+    <button type="button" aria-label={t("common.language")} title={t("common.language")} aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen(!open)} className="grid h-9 w-9 place-items-center rounded-control border border-line bg-surfaceSubtle text-text-body hover:bg-surfaceHover"><span aria-hidden="true">文</span></button>
     {open ? <div role="menu" aria-label={t("common.language")} className="absolute right-0 z-50 mt-2 w-44 rounded-card border border-line bg-surface p-1.5 shadow-elevated">
       {locales.map((loc) => <button key={loc} type="button" role="menuitemradio" aria-checked={locale === loc} onClick={() => { setLocale(loc); setOpen(false); }} className={"flex w-full items-center justify-between rounded-control px-3 py-2 text-left text-xs hover:bg-surfaceHover " + (locale === loc ? "font-semibold text-primary" : "text-text-body")}>{LOCALE_NAMES[loc] ?? loc}{locale === loc ? "✓" : null}</button>)}
     </div> : null}

@@ -1,3 +1,5 @@
+import { isThemeSelection, type ThemeSelection } from "./theme.ts";
+
 // 管理中心嵌入协议 v1；与主仓 frontend/src/lib/adminWorkspace.ts 对应。
 // 仅共享导航与显示偏好，不接收身份、令牌或权限；每个应用继续读取 /api/auth/me。
 const WORKSPACE = "storage";
@@ -38,23 +40,16 @@ export function announceAdminNavigation(): void { send("navigate"); }
 export function requestAdminWorkspaceLogin(): boolean { return send("login"); }
 
 /** 独立打开时不改变外壳；嵌入时由父管理中心唯一控制顶栏、语言和主题。 */
-export function connectAdminWorkspace(setLocale: (locale: Locale) => void): (() => void) | null {
+export function connectAdminWorkspace(setLocale: (locale: Locale) => void, setTheme: (theme: ThemeSelection) => void): (() => void) | null {
   if (!isAdminWorkspaceEmbedded()) return null;
   const receive = (event: MessageEvent) => {
     if (event.source !== window.parent || event.origin !== window.location.origin) return;
     const data = event.data;
     if (!data || typeof data !== "object" || data.channel !== CHANNEL || data.workspace !== WORKSPACE) return;
     if (data.type === "connect") { send("ready"); return; }
-    if (data.type !== "preferences" || !LOCALES.includes(data.locale) || (data.mode !== "dark" && data.mode !== "light")) return;
+    if (data.type !== "preferences" || !LOCALES.includes(data.locale) || !isThemeSelection(data)) return;
     setLocale(data.locale as Locale);
-    const root = document.documentElement;
-    root.setAttribute("data-theme-mode", data.mode);
-    for (const key of ["accent", "tone"] as const) {
-      if (typeof data[key] === "string" && /^[a-z0-9-]{1,40}$/.test(data[key])) root.setAttribute(`data-theme-${key}`, data[key]);
-    }
-    root.classList.toggle("dark", data.mode === "dark");
-    root.classList.toggle("light", data.mode === "light");
-    root.style.colorScheme = data.mode;
+    setTheme({ mode: data.mode, accent: data.accent, tone: data.tone, pattern: data.pattern });
   };
   // 跨出当前应用的普通链接交给顶层窗口，避免把站点页面或登录页嵌进工作区。
   const followLink = (event: MouseEvent) => {

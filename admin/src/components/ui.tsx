@@ -81,7 +81,7 @@ type ButtonProps = {
 export function Button({ children, onClick, type = "button", variant = "primary", disabled, busy }: ButtonProps) {
   const { t } = useI18n();
   const styles: Record<string, string> = {
-    primary: "bg-primary text-white hover:bg-primary-hover border border-transparent",
+    primary: "bg-primary text-primary-foreground hover:bg-primary-hover border border-transparent",
     ghost: "border border-line text-text-body hover:bg-surfaceHover",
     danger: "border border-red-500/40 text-danger hover:bg-red-500/10",
   };

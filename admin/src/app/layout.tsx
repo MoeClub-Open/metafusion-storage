@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { cookies } from "next/headers";
 import { AppShell } from "@/components/AppShell";
 import { SessionProvider } from "@/components/SessionProvider";
@@ -6,6 +6,11 @@ import { getMessages } from "@/shared/i18n/getMessages";
 import { I18nProvider } from "@/shared/i18n/I18nProvider";
 import { localeCookieName, normalizeLocale } from "@/shared/i18n/routing";
 import "@/shared/theme/globals.css";
+import { ThemeProvider } from "@/lib/themeContext";
+import { DEFAULT_ACCENT, DEFAULT_TONE, DEFAULT_PATTERN, DEFAULT_BG_DARK } from "@/lib/theme.generated";
+import { themeBootScript } from "@/shared/theme/boot.generated";
+
+export const viewport: Viewport = { themeColor: DEFAULT_BG_DARK };
 
 // 语言在服务端就定下来（读 NEXT_LOCALE cookie），避免首屏先按默认语言渲染再跳到用户语言。
 //
@@ -23,42 +28,21 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
-// 主题与主站共用 localStorage 口径（metafusion_theme_mode / _accent / _tone）：登录态、语言、主题
-// 三样在四个应用之间必须是同一份选择，因此在首次绘制前把 <html> 的属性补齐（复制自主仓库
-// MetaFusion/frontend/src/lib/themeContext.tsx 的 applyTheme；共享层落地后替换为依赖引用）。
-const themeScript = [
-  "(function () {",
-  "  try {",
-  "    var mode = localStorage.getItem(\"metafusion_theme_mode\") || \"dark\";",
-  "    var accent = localStorage.getItem(\"metafusion_theme_accent\");",
-  "    var tone = localStorage.getItem(\"metafusion_theme_tone\");",
-  "    var effective = mode === \"system\"",
-  "      ? (window.matchMedia(\"(prefers-color-scheme: dark)\").matches ? \"dark\" : \"light\")",
-  "      : mode;",
-  "    var root = document.documentElement;",
-  "    root.setAttribute(\"data-theme-mode\", effective);",
-  "    if (accent) root.setAttribute(\"data-theme-accent\", accent);",
-  "    if (tone) root.setAttribute(\"data-theme-tone\", tone);",
-  "    root.classList.toggle(\"dark\", effective === \"dark\");",
-  "    root.classList.toggle(\"light\", effective === \"light\");",
-  "    root.style.colorScheme = effective;",
-  "  } catch (e) {}",
-  "})();",
-].join("\n");
-
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const locale = normalizeLocale((await cookies()).get(localeCookieName)?.value);
   return (
-    <html lang={locale} className="dark" data-theme-mode="dark" suppressHydrationWarning>
+    <html lang={locale} className="dark" data-theme-mode="dark" data-theme-accent={DEFAULT_ACCENT} data-theme-tone={DEFAULT_TONE} data-theme-pattern={DEFAULT_PATTERN} suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+        <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
       </head>
-      <body className="antialiased">
+      <body className="font-sans antialiased">
+        <ThemeProvider>
         <I18nProvider initialLocale={locale}>
           <SessionProvider>
             <AppShell>{children}</AppShell>
           </SessionProvider>
         </I18nProvider>
+        </ThemeProvider>
       </body>
     </html>
   );
