@@ -83,7 +83,7 @@ export function Button({ children, onClick, type = "button", variant = "primary"
   const styles: Record<string, string> = {
     primary: "bg-primary text-primary-foreground hover:bg-primary-hover border border-transparent",
     ghost: "border border-line text-text-body hover:bg-surfaceHover",
-    danger: "border border-red-500/40 text-danger hover:bg-red-500/10",
+    danger: "border border-danger/40 text-danger hover:bg-danger/10",
   };
   return (
     <button
@@ -146,9 +146,9 @@ export function TextInput({
 export function Badge({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "ok" | "warn" | "bad" }) {
   const tones: Record<string, string> = {
     neutral: "border-line text-text-muted",
-    ok: "border-emerald-500/40 text-success",
-    warn: "border-amber-500/40 text-warn",
-    bad: "border-red-500/40 text-danger",
+    ok: "border-success/40 text-success",
+    warn: "border-warn/40 text-warn",
+    bad: "border-danger/40 text-danger",
   };
   return (
     <span className={"inline-flex items-center gap-1 rounded-chip border px-2 py-0.5 font-mono text-[11px] " + tones[tone]}>
@@ -168,9 +168,9 @@ export function Notice({
 }) {
   const tones: Record<string, { box: string; icon: string; mark: string }> = {
     info: { box: "border-line bg-surfaceSubtle", icon: "text-primary", mark: "info" },
-    ok: { box: "border-emerald-500/30 bg-emerald-500/5", icon: "text-success", mark: "check" },
-    warn: { box: "border-amber-500/30 bg-amber-500/5", icon: "text-warn", mark: "alert" },
-    error: { box: "border-red-500/30 bg-red-500/5", icon: "text-danger", mark: "alert" },
+    ok: { box: "border-success/30 bg-success/5", icon: "text-success", mark: "check" },
+    warn: { box: "border-warn/30 bg-warn/5", icon: "text-warn", mark: "alert" },
+    error: { box: "border-danger/30 bg-danger/5", icon: "text-danger", mark: "alert" },
   };
   const tone_ = tones[tone];
   return (
@@ -300,7 +300,7 @@ export function ConfirmDialog({
             type="button"
             onClick={onConfirm}
             disabled={busy}
-            className="inline-flex items-center gap-1.5 rounded-control border border-red-500/40 px-3 py-2 text-xs font-medium text-danger transition-colors hover:bg-red-500/10 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-control border border-danger/40 px-3 py-2 text-xs font-medium text-danger transition-colors hover:bg-danger/10 disabled:opacity-50"
           >
             {busy ? <Spinner /> : null}
             {confirmLabel}

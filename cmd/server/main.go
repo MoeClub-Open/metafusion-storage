@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/MoeclubM/metafusion-storage/internal/telemetry"
 	"github.com/gin-gonic/gin"
 
 	"github.com/MoeclubM/metafusion-storage/internal/audit"
@@ -152,7 +153,9 @@ func main() {
 	}
 
 	r := gin.New()
-	r.Use(gin.Logger(), gin.Recovery())
+	metrics := telemetry.New(db.DB(), "storage")
+	defer metrics.Close()
+	r.Use(metrics.Middleware(), gin.Recovery())
 	// 真实客户端 IP：只信任显式声明的来源（TRUSTED_PROXIES，默认回环 + RFC1918 私网 = 网关容器所在网段）。
 	// 此前是 SetTrustedProxies(nil)（谁都不是代理），XFF 被整段忽略、ClientIP() 恒等于网关容器 IP，
 	// 审计行的 actor_ip 因此全是网关地址——出事追不到人。配置非法直接拒绝启动：静默退回
