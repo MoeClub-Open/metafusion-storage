@@ -72,25 +72,23 @@ export default function OverviewPage() {
 
           {stats ? (
             <>
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                <div className="rounded-card border border-line bg-surfaceSubtle p-4">
+              <div className="grid grid-cols-2 gap-5 border-y border-line-subtle py-4 xl:grid-cols-4">
+                <div className="min-w-0">
                   <div className="text-[11px] uppercase tracking-wide text-text-faint">{t("overview.assetsLabel")}</div>
                   <div className="mt-2 font-mono text-2xl text-text-strong">{formatInt(stats.assets, locale)}</div>
                   <div className="mt-2 text-[11px] leading-relaxed text-text-muted">{t("overview.assetsHint")}</div>
                 </div>
-                <div className="rounded-card border border-line bg-surfaceSubtle p-4">
+                <div className="min-w-0">
                   <div className="text-[11px] uppercase tracking-wide text-text-faint">{t("overview.bytesLabel")}</div>
                   <div className="mt-2 font-mono text-2xl text-text-strong">{formatBytes(stats.bytes, locale)}</div>
                   <div className="mt-2 text-[11px] leading-relaxed text-text-muted">{t("overview.bytesHint")}</div>
-                  <div className="mt-1 font-mono text-[11px] text-text-faint">
-                    {t("overview.bytesRaw", { bytes: formatInt(stats.bytes, locale) })}
-                  </div>
+
                 </div>
-                <div className="rounded-card border border-line bg-surfaceSubtle p-4">
+                <div className="min-w-0">
                   <div className="text-[11px] uppercase tracking-wide text-text-faint">{t("overview.pendingLabel")}</div>
                   <div className="mt-2 font-mono text-2xl text-text-strong">{formatInt(stats.pending, locale)}</div>
                 </div>
-                <div className="rounded-card border border-line bg-surfaceSubtle p-4">
+                <div className="min-w-0">
                   <div className="text-[11px] uppercase tracking-wide text-text-faint">{t("overview.blockedLabel")}</div>
                   <div className="mt-2 font-mono text-2xl text-text-strong">{formatInt(stats.blocked, locale)}</div>
                 </div>
@@ -107,9 +105,6 @@ export default function OverviewPage() {
             </>
           ) : null}
 
-          <Notice tone="info" title={t("overview.noQuotaTitle")}>
-            {t("overview.noQuota")}
-          </Notice>
         </div>
       )}
     </Card>
