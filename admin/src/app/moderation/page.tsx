@@ -76,9 +76,9 @@ export default function ModerationPage() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <Card>
-        <SectionHeader title={t("moderation.title")} desc={t("moderation.desc")} actions={permitted ? <Button variant="ghost" onClick={() => void load(offset)} busy={loading}>{t("common.refresh")}</Button> : null} />
+        <SectionHeader title={t("moderation.title")} actions={permitted ? <Button variant="ghost" onClick={() => void load(offset)} busy={loading}>{t("common.refresh")}</Button> : null} />
         {!permitted ? <Notice tone="warn">{t("common.requiredPermission", { code: PERMISSION_ASSET_MODERATE })}</Notice> : null}
         {error ? <div className="mb-3"><Notice tone="error">{text(error)}</Notice></div> : null}
         {notice ? <div className="mb-3"><Notice tone="ok">{text(notice)}</Notice></div> : null}
@@ -95,7 +95,7 @@ export default function ModerationPage() {
       </Card>
       {permitted ? (
         <Card>
-          <SectionHeader title={t("moderation.listTitle")} desc={t("moderation.listDesc")} />
+          <SectionHeader title={t("moderation.listTitle")} />
           {loading && assets.length === 0 ? <p className="text-xs text-text-muted">{t("common.loading")}</p> : null}
           {!loading && assets.length === 0 ? <EmptyState>{t("moderation.empty")}</EmptyState> : null}
           {assets.length > 0 ? (

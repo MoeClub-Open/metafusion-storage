@@ -1,7 +1,5 @@
 "use client";
-// 极简 UI 原件：管理台只有三页，不值得引入组件库。
-// 视觉沿用主站的设计 token（tailwind.config.ts 与 shared/theme/globals.css 抄自主仓库），
-// 因此这里出现的类名与主站组件是同一套语义色（surface / line / text-*）。
+// 管理台组件沿用主站主题，密度由同步的 admin.css 统一维护。
 import React, { useEffect, useRef } from "react";
 import type { Message } from "@/lib/api";
 import { useI18n } from "@/shared/i18n/I18nProvider";
@@ -37,23 +35,21 @@ export function Icon({ name, className = "w-4 h-4" }: { name: keyof typeof ICONS
 }
 
 export function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <section className={"rounded-card border border-line bg-surface p-4 sm:p-5 " + className}>{children}</section>;
+  return <section className={"min-w-0 space-y-3 " + className}>{children}</section>;
 }
 
 export function SectionHeader({
   icon,
   title,
-  desc,
   actions,
 }: {
   icon?: string;
   title: string;
-  desc?: string;
   actions?: React.ReactNode;
 }) {
   return (
-    <header className="mb-4 flex flex-wrap items-start justify-between gap-3">
-      <div className="flex items-start gap-2.5">
+    <header className="flex min-h-8 flex-wrap items-center justify-between gap-2">
+      <div className="flex items-center gap-2">
         {icon ? (
           <span className="mt-0.5 text-primary">
             <Icon name={icon} className="w-4 h-4" />
@@ -61,7 +57,6 @@ export function SectionHeader({
         ) : null}
         <div>
           <h2 className="text-sm font-semibold text-text-strong">{title}</h2>
-          {desc ? <p className="mt-1 max-w-3xl text-xs leading-relaxed text-text-muted">{desc}</p> : null}
         </div>
       </div>
       {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
@@ -312,5 +307,5 @@ export function ConfirmDialog({
 }
 
 export function EmptyState({ children }: { children: React.ReactNode }) {
-  return <p className="rounded-card border border-dashed border-line px-4 py-6 text-center text-xs text-text-muted">{children}</p>;
+  return <p className="border-y border-line-subtle py-6 text-center text-xs text-text-muted">{children}</p>;
 }

@@ -147,7 +147,6 @@ export default function AssetsPage() {
       <SectionHeader
         icon="search"
         title={t("assets.title")}
-        desc={t("assets.desc")}
         actions={
           asset ? (
             <Button variant="ghost" onClick={() => void load(asset.id)} busy={loading}>
@@ -191,7 +190,7 @@ export default function AssetsPage() {
       ) : null}
 
       {asset ? (
-        <div className="mt-4 space-y-4">
+        <div className="mt-4 space-y-3">
           <section className="rounded-card border border-line p-4">
             <h3 className="mb-3 text-xs font-semibold text-text-strong">{t("assets.fileTitle")}</h3>
             <DataList

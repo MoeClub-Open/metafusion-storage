@@ -44,7 +44,6 @@ export default function OverviewPage() {
       <SectionHeader
         icon="gauge"
         title={t("overview.title")}
-        desc={t("overview.desc")}
         actions={
           permitted ? (
             <Button variant="ghost" onClick={() => void load()} busy={loading} disabled={loading}>
@@ -60,7 +59,7 @@ export default function OverviewPage() {
           {t("overview.forbidden")}
         </Notice>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-3">
           {error ? <Notice tone="error">{text(error)}</Notice> : null}
 
           {loading && !stats ? (
@@ -72,31 +71,27 @@ export default function OverviewPage() {
 
           {stats ? (
             <>
-              <div className="grid grid-cols-2 gap-5 border-y border-line-subtle py-4 xl:grid-cols-4">
+              <div className="grid grid-cols-2 gap-3 border-y border-line-subtle py-3 sm:grid-cols-4">
                 <div className="min-w-0">
                   <div className="text-[11px] uppercase tracking-wide text-text-faint">{t("overview.assetsLabel")}</div>
-                  <div className="mt-2 font-mono text-2xl text-text-strong">{formatInt(stats.assets, locale)}</div>
-                  <div className="mt-2 text-[11px] leading-relaxed text-text-muted">{t("overview.assetsHint")}</div>
+                  <div className="mt-1 text-xl font-semibold text-text-strong">{formatInt(stats.assets, locale)}</div>
                 </div>
                 <div className="min-w-0">
                   <div className="text-[11px] uppercase tracking-wide text-text-faint">{t("overview.bytesLabel")}</div>
-                  <div className="mt-2 font-mono text-2xl text-text-strong">{formatBytes(stats.bytes, locale)}</div>
-                  <div className="mt-2 text-[11px] leading-relaxed text-text-muted">{t("overview.bytesHint")}</div>
-
+                  <div className="mt-1 text-xl font-semibold text-text-strong">{formatBytes(stats.bytes, locale)}</div>
                 </div>
                 <div className="min-w-0">
                   <div className="text-[11px] uppercase tracking-wide text-text-faint">{t("overview.pendingLabel")}</div>
-                  <div className="mt-2 font-mono text-2xl text-text-strong">{formatInt(stats.pending, locale)}</div>
+                  <div className="mt-1 text-xl font-semibold text-text-strong">{formatInt(stats.pending, locale)}</div>
                 </div>
                 <div className="min-w-0">
                   <div className="text-[11px] uppercase tracking-wide text-text-faint">{t("overview.blockedLabel")}</div>
-                  <div className="mt-2 font-mono text-2xl text-text-strong">{formatInt(stats.blocked, locale)}</div>
+                  <div className="mt-1 text-xl font-semibold text-text-strong">{formatInt(stats.blocked, locale)}</div>
                 </div>
               </div>
 
               {stats.assets === 0 ? <Notice tone="info">{t("overview.emptyUsage")}</Notice> : null}
 
-              <p className="text-[11px] leading-relaxed text-text-muted">{t("overview.pendingNote")}</p>
               {fetchedAt ? (
                 <p className="font-mono text-[11px] text-text-faint">
                   {t("overview.updatedAt", { time: new Intl.DateTimeFormat(locale, { timeStyle: "medium" }).format(new Date(fetchedAt)) })}

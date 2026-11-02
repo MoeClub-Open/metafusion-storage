@@ -152,9 +152,9 @@ export default function BindingsPage() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <Card>
-        <SectionHeader icon="unlink" title={t("bindings.title")} desc={t("bindings.desc")} />
+        <SectionHeader icon="unlink" title={t("bindings.title")} />
 
         <div className="flex flex-wrap gap-1" role="tablist" aria-label={t("bindings.title")}>
           {(

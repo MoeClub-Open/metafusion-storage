@@ -45,9 +45,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => { announceAdminNavigation(); }, [pathname, searchParams]);
 
   return (
-    <div className="min-h-screen bg-background">
+    <div data-mf-admin className="min-h-screen bg-background">
       <header hidden={embedded} className="sticky top-0 z-30 border-b border-line bg-surface/90 backdrop-blur">
-        <div className="mx-auto flex h-14 w-full max-w-page items-center justify-between gap-2 px-4 sm:px-6">
+        <div className="mx-auto flex h-12 w-full items-center justify-between gap-2 px-4 sm:px-6">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <a href="/admin" aria-label={t("nav.backToHub")} title={t("nav.backToHub")} className="inline-flex h-11 w-11 sm:w-auto shrink-0 items-center justify-center gap-1 text-xs text-text-muted hover:text-text-strong"><span aria-hidden="true">←</span><span className="hidden sm:inline">{t("nav.backToHub")}</span></a>
             <span className="hidden text-text-faint sm:inline">/</span>
@@ -62,15 +62,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
-      <div className="mx-auto flex max-w-page flex-col gap-6 px-4 py-6 lg:flex-row">
-        <nav className="shrink-0 lg:w-52" aria-label={t("nav.groupLabel")}>
-          <div className="rounded-control border border-line bg-surfaceSubtle p-3 lg:hidden">
-            <label htmlFor="storage-admin-section" className="mb-2 block text-xs font-medium text-text-muted">{t("nav.groupLabel")}</label>
-            <select id="storage-admin-section" value={current} onChange={(e) => { prepareAdminNavigation("/admin/storage" + e.target.value); if (embedded) router.replace(e.target.value); else router.push(e.target.value); }} className="w-full rounded-control border border-line bg-surface px-3 py-2.5 text-sm text-text-strong">
+      <div className="mx-auto flex w-full flex-col gap-4 px-4 py-3 lg:flex-row">
+        <nav className="shrink-0 lg:w-[200px]" aria-label={t("nav.groupLabel")}>
+          <div className="flex items-center gap-2 lg:hidden">
+            <label htmlFor="storage-admin-section" className="sr-only">{t("nav.groupLabel")}</label>
+            <select id="storage-admin-section" value={current} onChange={(e) => { prepareAdminNavigation("/admin/storage" + e.target.value); if (embedded) router.replace(e.target.value); else router.push(e.target.value); }} className="min-w-0 flex-1 rounded-control border border-line bg-surface px-2.5 py-2 text-sm text-text-strong">
               {visibleNav.map((item) => <option key={item.href} value={item.href}>{t(item.key)}</option>)}
             </select>
           </div>
-          <ul className={`hidden rounded-control border border-line bg-surfaceSubtle p-2 lg:sticky ${embedded ? "lg:top-6" : "lg:top-24"} lg:flex lg:flex-col`}>
+          <ul className={`hidden p-1 lg:sticky ${embedded ? "lg:top-3" : "lg:top-16"} lg:flex lg:flex-col`}>
             {visibleNav.map((item) => {
               const active = current === item.href;
               return (
@@ -81,7 +81,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     onClick={(event) => prepareAdminNavigation(event.currentTarget.href, event)}
                     aria-current={active ? "page" : undefined}
                     className={
-                      "flex items-center gap-3 rounded-control px-3 py-2.5 text-sm transition-colors " +
+                      "flex items-center gap-2 rounded-control px-2 py-1.5 text-[13px] transition-colors " +
                       (active
                         ? "bg-primary/15 font-semibold text-primary"
                         : "text-text-muted hover:bg-surfaceHover hover:text-text-body")
@@ -96,7 +96,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </ul>
         </nav>
 
-        <main className="min-w-0 flex-1 space-y-4">{children}</main>
+        <main data-mf-admin-content className="min-w-0 flex-1 space-y-3">{children}</main>
       </div>
     </div>
   );
