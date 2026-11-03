@@ -12,13 +12,16 @@ import (
 func TestCredentialsCheckerLookupAndMatch(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/auth/credentials-status/", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-Internal-Token"); got != "svc-secret" {
+			t.Errorf("X-Internal-Token = %q，期望服务身份", got)
+		}
 		uid := r.URL.Path[len("/api/auth/credentials-status/"):]
 		_ = json.NewEncoder(w).Encode(CredentialsStatus{UserID: uid, TokenVersion: 3, Banned: false})
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	c := NewCredentialsChecker(srv.URL)
+	c := NewCredentialsChecker(srv.URL, "svc-secret")
 	st, err := c.Lookup(context.Background(), "u1")
 	if err != nil {
 		t.Fatalf("lookup: %v", err)
@@ -45,7 +48,7 @@ func TestCredentialsCheckerCache(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	c := NewCredentialsChecker(srv.URL)
+	c := NewCredentialsChecker(srv.URL, "svc-secret")
 	now := time.Unix(1_700_000_000, 0)
 	c.now = func() time.Time { return now }
 
@@ -64,5 +67,24 @@ func TestCredentialsCheckerCache(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("expected refresh after TTL, got %d", calls)
+	}
+}
+
+func TestCredentialsCheckerSendsInternalToken(t *testing.T) {
+	got := ""
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/auth/credentials-status/", func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("X-Internal-Token")
+		_ = json.NewEncoder(w).Encode(CredentialsStatus{UserID: "u1", TokenVersion: 1})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := NewCredentialsChecker(srv.URL, "svc-secret")
+	if _, err := c.Lookup(context.Background(), "u1"); err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if got != "svc-secret" {
+		t.Fatalf("X-Internal-Token = %q", got)
 	}
 }

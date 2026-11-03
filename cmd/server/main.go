@@ -134,9 +134,12 @@ func main() {
 		// PAT（mfp_ 前缀）走内省端点
 		// POST /api/auth/tokens/introspect，结果进程内缓存 60 秒（= 吊销窗口），见 internal/auth/pat.go。
 		verifier.SetPAT(patIntrospector)
-		verifier.SetCredentialsChecker(auth.NewCredentialsChecker(cfg.AuthURL))
+		verifier.SetCredentialsChecker(auth.NewCredentialsChecker(cfg.AuthURL, cfg.InternalAPIToken))
 	} else {
 		log.Print("AUTH_URL is not configured: personal access tokens (mfp_ prefix) will be rejected with 503 auth_unavailable")
+	}
+	if cfg.AuthURL != "" && cfg.InternalAPIToken == "" {
+		log.Print("INTERNAL_API_TOKEN is not configured: credentials-status lookups will fail closed after auth lockdown (H1/H2 auth_unavailable)")
 	}
 	// 启动时把实际生效的出站参数打出来：调用点只写自己关心的字段，其余由策略兜底收敛，
 	// 排查"为什么这次调用退避了 5 次"时不该靠读代码。
