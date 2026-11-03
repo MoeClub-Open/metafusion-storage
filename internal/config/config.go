@@ -37,6 +37,8 @@ type Config struct {
 	JWTAudience     string
 	// AuthURL 账号服务地址，用于 PAT 内省及健康探针。会话 JWT 在本地验签。
 	AuthURL string
+	// InternalAPIToken 跨服务共享密钥（INTERNAL_API_TOKEN），供 credentials-status 服务身份。
+	InternalAPIToken string
 	// CatalogURL 元数据服务地址：实体可见性必须问它，存储侧不复制目录数据。
 	CatalogURL string
 	// CatalogLifecycleSecret authenticates the internal catalog reference consumer.
@@ -98,6 +100,7 @@ func Load() Config {
 		JWTIssuer:              env("AUTH_JWT_ISSUER", "https://findverse.cc/api"),
 		JWTAudience:            env("AUTH_JWT_AUDIENCE", "metafusion"),
 		AuthURL:                env("AUTH_URL", ""),
+		InternalAPIToken:       strings.TrimSpace(os.Getenv("INTERNAL_API_TOKEN")),
 		CatalogURL:             env("CATALOG_URL", "http://backend:8080"),
 		CatalogLifecycleSecret: env("STORAGE_CATALOG_LIFECYCLE_SECRET", ""),
 		PresignTTL:             time.Duration(envInt("STORAGE_PRESIGN_TTL_MINUTES", 120)) * time.Minute,
