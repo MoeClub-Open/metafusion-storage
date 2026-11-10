@@ -81,6 +81,9 @@ type Config struct {
 	// 置 true 时跳过 BucketExists/MakeBucket，只用仅目标桶数据操作的服务凭据启动（最小权限，见 README）。
 	// 管理面（建桶/删桶/跨桶）用另外的运维身份，不与服务凭据共用。
 	S3SkipBucketEnsure bool
+	// CatalogAssetsOnly 启用后仅允许上传目录受管基础视觉素材（封面、手册内页等位图图像），
+	// 拒绝音频/视频/镜像等作品本体上传及直接实体绑定；独立资源站部署时保持 false。
+	CatalogAssetsOnly bool
 }
 
 func Load() Config {
@@ -117,6 +120,7 @@ func Load() Config {
 		OrphanRetentionDays:    envInt("STORAGE_ORPHAN_RETENTION_DAYS", 7),
 		UnboundRetentionDays:   envInt("STORAGE_UNBOUND_RETENTION_DAYS", 7),
 		S3SkipBucketEnsure:     envBool("STORAGE_S3_SKIP_BUCKET_ENSURE", false),
+		CatalogAssetsOnly:      envBool("STORAGE_CATALOG_ASSETS_ONLY", false),
 	}
 	if c.UploadLeaseMinutes <= 0 {
 		c.UploadLeaseMinutes = int(c.PresignTTL.Minutes())

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"regexp"
@@ -235,6 +236,24 @@ func (h *Handler) initiateUpload(c *gin.Context) {
 		fail(c, 400, "too_many_parts")
 		return
 	}
+	if h.cfg.CatalogAssetsOnly {
+		if in.TargetEntityID != "" {
+			fail(c, http.StatusForbidden, "catalog_assets_only")
+			return
+		}
+		rawRole := strings.ToLower(strings.TrimSpace(in.BindingRole))
+		if rawRole != "" && rawRole != "cover_image" {
+			fail(c, http.StatusForbidden, "catalog_assets_only")
+			return
+		}
+		in.BindingRole = "cover_image"
+		visualMime, ok := resolveCatalogVisualMime(in.MimeType, in.FileName)
+		if !ok {
+			fail(c, http.StatusUnsupportedMediaType, "unsupported_media_type")
+			return
+		}
+		in.MimeType = visualMime
+	}
 	role := normalizeRole(in.BindingRole)
 	if role == "" {
 		fail(c, 400, "invalid_binding_role")
@@ -278,6 +297,12 @@ func (h *Handler) initiateUpload(c *gin.Context) {
 	}
 	switch {
 	case err == nil && asset.Status == "complete":
+		if h.cfg.CatalogAssetsOnly {
+			if _, ok := resolveCatalogVisualMime(asset.MimeType, asset.FileName); !ok {
+				fail(c, http.StatusUnsupportedMediaType, "unsupported_media_type")
+				return
+			}
+		}
 		// S02 复用门禁（与 verify-hash/下载/独立 bind 同一口径，字节去重与授权分开）：
 		// 先查可读性，无权命中统一 404（不返他人元数据，上游故障则 503），摘要不做授权凭证；
 		// 再查再绑定权限，新增绑定需所有者/审核（与 bind 一致），可读仅允许秒传元数据复用。
@@ -541,6 +566,9 @@ func (h *Handler) completeUpload(c *gin.Context) {
 		fail(c, status, reason)
 		return
 	}
+	if !h.verifyCatalogVisualObject(c, ctx, asset) {
+		return
+	}
 	if err = h.db.MarkHashVerified(ctx, asset.ID, read); err != nil {
 		h.failStorageWrite(c, err)
 		return
@@ -640,6 +668,9 @@ func (h *Handler) streamUpload(c *gin.Context) {
 			return
 		}
 	}
+	if !h.verifyCatalogVisualObject(c, ctx, asset) {
+		return
+	}
 	if err := h.db.MarkHashVerified(ctx, asset.ID, size); err != nil {
 		h.failStorageWrite(c, err)
 		return
@@ -658,6 +689,28 @@ func (h *Handler) streamUpload(c *gin.Context) {
 	c.JSON(200, gin.H{"asset": asset})
 }
 
+// verifyCatalogVisualObject 在仅目录视觉素材模式下打开落盘对象检查真实图片文件头。
+func (h *Handler) verifyCatalogVisualObject(c *gin.Context, ctx context.Context, asset store.Asset) bool {
+	if !h.cfg.CatalogAssetsOnly {
+		return true
+	}
+	obj, _, err := h.objects.Open(ctx, asset.ObjectKey)
+	if err != nil {
+		fail(c, http.StatusServiceUnavailable, "storage_unavailable")
+		return false
+	}
+	head := make([]byte, 512)
+	n, _ := io.ReadFull(obj, head)
+	_ = obj.Close()
+	if _, ok := sniffCatalogVisualMime(head[:n]); !ok {
+		_ = h.objects.Remove(ctx, asset.ObjectKey)
+		_ = h.db.MarkHashMismatch(ctx, asset.ID, "unsupported_media_type")
+		fail(c, http.StatusUnsupportedMediaType, "unsupported_media_type")
+		return false
+	}
+	return true
+}
+
 func (h *Handler) bind(c *gin.Context) {
 	var in struct {
 		AssetID          string `json:"asset_id"`
@@ -667,6 +720,10 @@ func (h *Handler) bind(c *gin.Context) {
 	}
 	if !body(c, &in) || in.AssetID == "" || in.TargetEntityID == "" {
 		fail(c, 400, "invalid_payload")
+		return
+	}
+	if h.cfg.CatalogAssetsOnly {
+		fail(c, http.StatusForbidden, "catalog_assets_only")
 		return
 	}
 	role := normalizeRole(in.BindingRole)
@@ -725,6 +782,10 @@ func (h *Handler) bind(c *gin.Context) {
 func (h *Handler) unbind(c *gin.Context) {
 	if !validID(c.Param("id")) {
 		fail(c, 404, "not_found")
+		return
+	}
+	if h.cfg.CatalogAssetsOnly {
+		fail(c, http.StatusForbidden, "catalog_assets_only")
 		return
 	}
 	p := auth.Current(c)

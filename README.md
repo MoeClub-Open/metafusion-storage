@@ -173,6 +173,7 @@ JWKS 拉取**刻意不走**这套执行器：公钥拉取自带 10 分钟缓存�
 | `AUTH_JWT_ISSUER` / `AUTH_JWT_AUDIENCE` | `https://findverse.cc/api` / `metafusion` | 与主仓库保持一致，避免存量令牌失效 |
 | `CATALOG_URL` | `http://backend:8080` | 目录服务地址（可见性判定） |
 | `STORAGE_CATALOG_LIFECYCLE_SECRET` | 空 | 自托管图片协作所需的专用服务凭据；由运维填写并在目录与存储两侧配置同一值，不自动生成，不能使用用户 JWT/PAT 替代 |
+| `STORAGE_CATALOG_ASSETS_ONLY` | `false` | 置 `true` 仅接收目录位图（JPEG/PNG/WebP/AVIF/GIF 且核验文件头魔数，不符回 `415 unsupported_media_type`）；`initiate` 禁带 `target_entity_id` 并归一 `binding_role=cover_image`，公开 `bind`/`unbind` 回 `403 catalog_assets_only` |
 | `STORAGE_PRESIGN_TTL_MINUTES` | `120` | 预签名有效期；同时是上传租约的默认寿命（签发地址过期了租约也没意义） |
 | `STORAGE_MAX_PARTS` | `10000` | 单次上传最大分片数 |
 | `STORAGE_MAX_UPLOAD_MB` | `0` | 服务端接收路径的上限，`0` 为不限制（直传路径不受此限） |

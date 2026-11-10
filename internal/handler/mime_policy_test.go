@@ -42,3 +42,32 @@ func TestInlineAllowedBoundaries(t *testing.T) {
 		}
 	}
 }
+
+func TestCatalogVisualMimeBoundaries(t *testing.T) {
+	if got, ok := resolveCatalogVisualMime("image/png", "cover.png"); !ok || got != "image/png" {
+		t.Fatalf("resolveCatalogVisualMime png = (%q, %v)", got, ok)
+	}
+	if got, ok := resolveCatalogVisualMime("application/octet-stream", "booklet-01.webp"); !ok || got != "image/webp" {
+		t.Fatalf("resolveCatalogVisualMime fallback ext = (%q, %v)", got, ok)
+	}
+	for _, bad := range [][2]string{
+		{"audio/flac", "01.flac"},
+		{"video/mp4", "pv.mp4"},
+		{"image/svg+xml", "logo.svg"},
+		{"application/zip", "scans.zip"},
+		{"application/octet-stream", "disc.iso"},
+	} {
+		if _, ok := resolveCatalogVisualMime(bad[0], bad[1]); ok {
+			t.Fatalf("resolveCatalogVisualMime(%q, %q) should be rejected", bad[0], bad[1])
+		}
+	}
+	if got, ok := sniffCatalogVisualMime([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00}); !ok || got != "image/png" {
+		t.Fatalf("sniffCatalogVisualMime png = (%q, %v)", got, ok)
+	}
+	if got, ok := sniffCatalogVisualMime([]byte{0x00, 0x00, 0x00, 0x1c, 'f', 't', 'y', 'p', 'a', 'v', 'i', 'f'}); !ok || got != "image/avif" {
+		t.Fatalf("sniffCatalogVisualMime avif = (%q, %v)", got, ok)
+	}
+	if _, ok := sniffCatalogVisualMime([]byte("fLaC\x00\x00\x00\x22fake-image")); ok {
+		t.Fatal("sniffCatalogVisualMime should reject disguised audio bytes")
+	}
+}
