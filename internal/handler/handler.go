@@ -62,7 +62,7 @@ func (h *Handler) Register(r *gin.Engine) {
 	// TestAuditLogAgainstPostgresAuthRejectedWrites）。
 	api.Use(h.auditMiddleware())
 	api.Use(v.Middleware())
-	api.Use(apiRateLimiter())
+	api.Use(apiRateLimiterWithConfig(h.cfg))
 	{
 		api.POST("/upload/initiate", v.Required(), h.requireUpload(), h.initiateUpload)
 		api.POST("/upload/complete", v.Required(), h.requireUpload(), h.completeUpload)

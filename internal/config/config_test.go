@@ -30,3 +30,29 @@ func TestInternalEndpointIsNeverUsedAsPublicEndpoint(t *testing.T) {
 		t.Fatalf("internal endpoint exposed for signing: %q", got)
 	}
 }
+
+func TestLoadConcurrencyAndRateLimitDefaultsAndOverrides(t *testing.T) {
+	cfg := Load()
+	if !cfg.RateLimitConfigured || cfg.RateLimitReadRPM != 180 || cfg.RateLimitWriteRPM != 180 {
+		t.Fatalf("unexpected default rate limits: %+v", cfg)
+	}
+	if cfg.UpstreamMaxIdleConnsPerHost != 64 || cfg.S3MaxIdleConnsPerHost != 128 {
+		t.Fatalf("unexpected default idle pool limits: upstream=%d s3=%d", cfg.UpstreamMaxIdleConnsPerHost, cfg.S3MaxIdleConnsPerHost)
+	}
+
+	t.Setenv("STORAGE_RATE_LIMIT_READ_RPM", "0")
+	t.Setenv("STORAGE_RATE_LIMIT_WRITE_RPM", "2400")
+	t.Setenv("STORAGE_UPSTREAM_MAX_IDLE_CONNS_PER_HOST", "256")
+	t.Setenv("STORAGE_S3_MAX_IDLE_CONNS_PER_HOST", "512")
+	cfg = Load()
+	if cfg.RateLimitReadRPM != 0 || cfg.RateLimitWriteRPM != 2400 || cfg.UpstreamMaxIdleConnsPerHost != 256 || cfg.S3MaxIdleConnsPerHost != 512 {
+		t.Fatalf("unexpected overridden concurrency config: %+v", cfg)
+	}
+
+	t.Setenv("STORAGE_RATE_LIMIT_READ_RPM", "-1")
+	t.Setenv("STORAGE_RATE_LIMIT_WRITE_RPM", "invalid")
+	cfg = Load()
+	if cfg.RateLimitReadRPM != 180 || cfg.RateLimitWriteRPM != 180 {
+		t.Fatalf("invalid values should fall back to defaults, got read=%d write=%d", cfg.RateLimitReadRPM, cfg.RateLimitWriteRPM)
+	}
+}

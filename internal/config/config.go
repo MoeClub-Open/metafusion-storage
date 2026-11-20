@@ -84,6 +84,14 @@ type Config struct {
 	// CatalogAssetsOnly 启用后仅允许上传目录受管基础视觉素材（封面、手册内页等位图图像），
 	// 拒绝音频/视频/镜像等作品本体上传及直接实体绑定；独立资源站部署时保持 false。
 	CatalogAssetsOnly bool
+	// RateLimitReadRPM / RateLimitWriteRPM 为读、写 API 限流（每分钟请求数，0 表示不限制）。
+	// RateLimitConfigured 为 true 时以字段值为准，否则在兼容零值结构体测试时回落默认 180。
+	RateLimitReadRPM   int
+	RateLimitWriteRPM  int
+	RateLimitConfigured bool
+	// UpstreamMaxIdleConnsPerHost / S3MaxIdleConnsPerHost 控制出站 HTTP 与对象存储连接池上限。
+	UpstreamMaxIdleConnsPerHost int
+	S3MaxIdleConnsPerHost       int
 }
 
 func Load() Config {
@@ -121,6 +129,11 @@ func Load() Config {
 		UnboundRetentionDays:   envInt("STORAGE_UNBOUND_RETENTION_DAYS", 7),
 		S3SkipBucketEnsure:     envBool("STORAGE_S3_SKIP_BUCKET_ENSURE", false),
 		CatalogAssetsOnly:      envBool("STORAGE_CATALOG_ASSETS_ONLY", false),
+		RateLimitReadRPM:           envNonNegInt("STORAGE_RATE_LIMIT_READ_RPM", 180),
+		RateLimitWriteRPM:          envNonNegInt("STORAGE_RATE_LIMIT_WRITE_RPM", 180),
+		RateLimitConfigured:         true,
+		UpstreamMaxIdleConnsPerHost: envInt("STORAGE_UPSTREAM_MAX_IDLE_CONNS_PER_HOST", 64),
+		S3MaxIdleConnsPerHost:       envInt("STORAGE_S3_MAX_IDLE_CONNS_PER_HOST", 128),
 	}
 	if c.UploadLeaseMinutes <= 0 {
 		c.UploadLeaseMinutes = int(c.PresignTTL.Minutes())
@@ -192,6 +205,18 @@ func envInt(k string, def int) int {
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil || n <= 0 {
+		return def
+	}
+	return n
+}
+
+func envNonNegInt(k string, def int) int {
+	v := strings.TrimSpace(os.Getenv(k))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
 		return def
 	}
 	return n

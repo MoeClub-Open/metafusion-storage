@@ -2,6 +2,7 @@ package handler
 
 import (
 	"github.com/MoeclubM/metafusion-storage/internal/auth"
+	"github.com/MoeclubM/metafusion-storage/internal/config"
 	"github.com/gin-gonic/gin"
 	"strconv"
 	"sync"
@@ -10,6 +11,17 @@ import (
 
 // API 默认按已验证账号与路由计数；匿名按 IP。admin 组跳过业务计数。
 func apiRateLimiter() gin.HandlerFunc {
+	return apiRateLimiterWithLimits(180, 180)
+}
+
+func apiRateLimiterWithConfig(cfg config.Config) gin.HandlerFunc {
+	if !cfg.RateLimitConfigured {
+		return apiRateLimiterWithLimits(180, 180)
+	}
+	return apiRateLimiterWithLimits(cfg.RateLimitReadRPM, cfg.RateLimitWriteRPM)
+}
+
+func apiRateLimiterWithLimits(readLimit, writeLimit int) gin.HandlerFunc {
 	type window struct {
 		start time.Time
 		used  int
@@ -17,6 +29,16 @@ func apiRateLimiter() gin.HandlerFunc {
 	var mu sync.Mutex
 	buckets := map[string]window{}
 	return func(c *gin.Context) {
+		category := "write"
+		limit := writeLimit
+		if c.Request.Method == "GET" || c.Request.Method == "HEAD" {
+			category = "read"
+			limit = readLimit
+		}
+		if limit <= 0 {
+			c.Next()
+			return
+		}
 		key := "ip:" + c.ClientIP()
 		if p := auth.Current(c); p != nil {
 			if !p.IsThirdParty {
@@ -28,10 +50,6 @@ func apiRateLimiter() gin.HandlerFunc {
 				}
 			}
 			key = "user:" + p.ID
-		}
-		category := "write"
-		if c.Request.Method == "GET" || c.Request.Method == "HEAD" {
-			category = "read"
 		}
 		key += "|" + category
 		now := time.Now()
@@ -50,12 +68,12 @@ func apiRateLimiter() gin.HandlerFunc {
 		b.used++
 		buckets[key] = b
 		mu.Unlock()
-		remaining := max(0, 180-b.used)
+		remaining := max(0, limit-b.used)
 		reset := max(1, int(time.Until(b.start.Add(time.Minute)).Seconds())+1)
-		c.Header("X-RateLimit-Limit", "180")
+		c.Header("X-RateLimit-Limit", strconv.Itoa(limit))
 		c.Header("X-RateLimit-Remaining", strconv.Itoa(remaining))
 		c.Header("X-RateLimit-Reset", strconv.Itoa(reset))
-		if b.used > 180 {
+		if b.used > limit {
 			c.Header("Retry-After", strconv.Itoa(reset))
 			c.Abort()
 			fail(c, 429, "rate_limited")

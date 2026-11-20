@@ -120,7 +120,7 @@ func main() {
 		return
 	}
 
-	cat := catalog.New(cfg.CatalogURL)
+	cat := catalog.NewWithMaxIdleConns(cfg.CatalogURL, cfg.UpstreamMaxIdleConnsPerHost)
 	verifier, err := auth.New(cfg)
 	if err != nil {
 		log.Fatalf("token verifier initialization failed: %v", err)
@@ -129,12 +129,12 @@ func main() {
 	// 目录可见性、PAT 内省各建一个、长期复用——连接池与熔断器都在实例里，
 	// 每次请求新建等于每请求一个熔断器（永远闭合，等于没熔断）。
 	// 未配置 AUTH_URL 时内省器仍存在但不会被注入，深探针据此记 not_configured。
-	patIntrospector := auth.NewPATIntrospector(cfg.AuthURL)
+	patIntrospector := auth.NewPATIntrospectorWithMaxIdleConns(cfg.AuthURL, cfg.UpstreamMaxIdleConnsPerHost)
 	if cfg.AuthURL != "" {
 		// PAT（mfp_ 前缀）走内省端点
 		// POST /api/auth/tokens/introspect，结果进程内缓存 60 秒（= 吊销窗口），见 internal/auth/pat.go。
 		verifier.SetPAT(patIntrospector)
-		verifier.SetCredentialsChecker(auth.NewCredentialsChecker(cfg.AuthURL, cfg.InternalAPIToken))
+		verifier.SetCredentialsChecker(auth.NewCredentialsCheckerWithMaxIdleConns(cfg.AuthURL, cfg.InternalAPIToken, cfg.UpstreamMaxIdleConnsPerHost))
 	} else {
 		log.Print("AUTH_URL is not configured: personal access tokens (mfp_ prefix) will be rejected with 503 auth_unavailable")
 	}
@@ -149,6 +149,8 @@ func main() {
 		catPolicy.Attempts, catPolicy.AttemptTimeout, catPolicy.Budget, catPolicy.BreakerThreshold, catPolicy.BreakerOpenFor,
 		authOutPolicy.Attempts, authOutPolicy.AttemptTimeout, authOutPolicy.Budget,
 		authOutPolicy.BreakerThreshold, authOutPolicy.BreakerOpenFor)
+	log.Printf("storage concurrency: rate_limit_rpm(read=%d write=%d) concurrent_uploads(user=%d site=%d) max_idle_per_host(upstream=%d s3=%d)",
+		cfg.RateLimitReadRPM, cfg.RateLimitWriteRPM, cfg.UserConcurrentUploads, cfg.SiteConcurrentUploads, cfg.UpstreamMaxIdleConnsPerHost, cfg.S3MaxIdleConnsPerHost)
 	// 深探针目标：地址来自配置（未配置即 not_configured），执行器与请求路径共用。
 	upstreamProbes := []upstream.ProbeTarget{
 		{Client: cat.Upstream(), URL: upstreamReadyURL(cfg.CatalogURL)},

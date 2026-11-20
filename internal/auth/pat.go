@@ -164,15 +164,26 @@ func (p *PATIntrospector) Upstream() *upstream.Client {
 // NewPATIntrospector 用账号服务基址建内省器；baseURL 为空时内省器存在但一律判为不可用
 // （调用方据此回 503，而不是把没配置当成"凭据错"）。
 func NewPATIntrospector(baseURL string) *PATIntrospector {
-	return newPATIntrospector(baseURL, nil)
+	return NewPATIntrospectorWithMaxIdleConns(baseURL, 0)
+}
+
+func NewPATIntrospectorWithMaxIdleConns(baseURL string, maxIdlePerHost int) *PATIntrospector {
+	return newPATIntrospectorWithMaxIdleConns(baseURL, nil, maxIdlePerHost)
 }
 
 // newPATIntrospector 允许注入时钟：测试要验证 60 秒窗口与缓存过期，等真时间不可行。
 func newPATIntrospector(baseURL string, now func() time.Time) *PATIntrospector {
+	return newPATIntrospectorWithMaxIdleConns(baseURL, now, 0)
+}
+
+func newPATIntrospectorWithMaxIdleConns(baseURL string, now func() time.Time, maxIdlePerHost int) *PATIntrospector {
 	if now == nil {
 		now = time.Now
 	}
 	policy := authPolicy("auth")
+	if maxIdlePerHost > 0 {
+		policy.MaxIdleConnsPerHost = maxIdlePerHost
+	}
 	return &PATIntrospector{
 		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
 		up:      upstream.New(policy),

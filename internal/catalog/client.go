@@ -44,9 +44,17 @@ type Client struct {
 }
 
 func New(base string) *Client {
+	return NewWithMaxIdleConns(base, 0)
+}
+
+func NewWithMaxIdleConns(base string, maxIdlePerHost int) *Client {
+	p := visiblePolicy()
+	if maxIdlePerHost > 0 {
+		p.MaxIdleConnsPerHost = maxIdlePerHost
+	}
 	return &Client{
 		base: strings.TrimRight(strings.TrimSpace(base), "/"),
-		up:   upstream.New(visiblePolicy()),
+		up:   upstream.New(p),
 	}
 }
 

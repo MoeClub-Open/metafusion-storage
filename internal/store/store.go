@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -83,8 +85,28 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(32)
-	db.SetMaxIdleConns(16)
+	maxOpen := 32
+	if value := strings.TrimSpace(os.Getenv("STORAGE_DB_MAX_OPEN_CONNS")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 256 {
+			db.Close()
+			return nil, fmt.Errorf("invalid STORAGE_DB_MAX_OPEN_CONNS")
+		}
+		maxOpen = parsed
+	}
+	maxIdle := min(16, maxOpen)
+	if value := strings.TrimSpace(os.Getenv("STORAGE_DB_MAX_IDLE_CONNS")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 0 || parsed > maxOpen {
+			db.Close()
+			return nil, fmt.Errorf("invalid STORAGE_DB_MAX_IDLE_CONNS")
+		}
+		maxIdle = parsed
+	}
+	db.SetMaxOpenConns(maxOpen)
+	db.SetMaxIdleConns(maxIdle)
+	db.SetConnMaxIdleTime(5 * time.Minute)
+	db.SetConnMaxLifetime(time.Hour)
 	if err = db.PingContext(ctx); err != nil {
 		db.Close()
 		return nil, err

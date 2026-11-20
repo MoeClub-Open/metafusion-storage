@@ -67,6 +67,17 @@ func New(ctx context.Context, cfg config.Config) (*Store, error) {
 		return s, nil
 	}
 	opts := &minio.Options{Creds: credentials.NewStaticV4(cfg.S3AccessKey, cfg.S3SecretKey, ""), Secure: cfg.S3TLS}
+	if cfg.S3MaxIdleConnsPerHost > 0 {
+		tr, err := minio.DefaultTransport(cfg.S3TLS)
+		if err != nil {
+			return nil, err
+		}
+		tr.MaxIdleConnsPerHost = cfg.S3MaxIdleConnsPerHost
+		if tr.MaxIdleConns < cfg.S3MaxIdleConnsPerHost*4 {
+			tr.MaxIdleConns = max(256, cfg.S3MaxIdleConnsPerHost*4)
+		}
+		opts.Transport = tr
+	}
 	client, err := minio.New(cfg.S3Endpoint, opts)
 	if err != nil {
 		return nil, err

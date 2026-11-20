@@ -59,10 +59,18 @@ const InternalTokenHeader = "X-Internal-Token"
 // internalToken 对应 INTERNAL_API_TOKEN；空串时仍会发请求，但账号侧服务身份 fail-closed，
 // Lookup 会失败并表现为 auth_unavailable（部署必须同值注入）。
 func NewCredentialsChecker(baseURL, internalToken string) *CredentialsChecker {
+	return NewCredentialsCheckerWithMaxIdleConns(baseURL, internalToken, 0)
+}
+
+func NewCredentialsCheckerWithMaxIdleConns(baseURL, internalToken string, maxIdlePerHost int) *CredentialsChecker {
+	p := authPolicy("credentials")
+	if maxIdlePerHost > 0 {
+		p.MaxIdleConnsPerHost = maxIdlePerHost
+	}
 	return &CredentialsChecker{
 		baseURL:       strings.TrimRight(strings.TrimSpace(baseURL), "/"),
 		internalToken: strings.TrimSpace(internalToken),
-		up:            upstream.New(authPolicy("credentials")),
+		up:            upstream.New(p),
 		now:           time.Now,
 		cache:         map[string]credentialsCacheEntry{},
 	}

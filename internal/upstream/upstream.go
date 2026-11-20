@@ -87,6 +87,8 @@ type Policy struct {
 	BreakerHalfOpenProbes int
 	// ProbeTimeout 是深探针单次探测的超时：必须远小于请求路径上的超时。
 	ProbeTimeout time.Duration
+	// MaxIdleConnsPerHost 控制单上游最大空闲连接数，0 时收敛为默认 64。
+	MaxIdleConnsPerHost int
 }
 
 // DefaultPolicy 返回一份保守可用的策略；调用点只覆盖自己关心的字段。
@@ -107,6 +109,7 @@ func DefaultPolicy(name string) Policy {
 		BreakerOpenFor:        10 * time.Second,
 		BreakerHalfOpenProbes: 1,
 		ProbeTimeout:          1500 * time.Millisecond,
+		MaxIdleConnsPerHost:   64,
 	}
 }
 
@@ -178,6 +181,9 @@ func (p Policy) normalized() Policy {
 	}
 	if p.ProbeTimeout <= 0 {
 		p.ProbeTimeout = 1500 * time.Millisecond
+	}
+	if p.MaxIdleConnsPerHost <= 0 {
+		p.MaxIdleConnsPerHost = 64
 	}
 	return p
 }
@@ -327,7 +333,10 @@ func New(p Policy) *Client {
 	tr.DialContext = (&net.Dialer{Timeout: np.DialTimeout, KeepAlive: 30 * time.Second}).DialContext
 	tr.TLSHandshakeTimeout = np.TLSHandshakeTimeout
 	tr.ResponseHeaderTimeout = np.HeaderTimeout
-	tr.MaxIdleConnsPerHost = 8
+	tr.MaxIdleConnsPerHost = np.MaxIdleConnsPerHost
+	if tr.MaxIdleConns < np.MaxIdleConnsPerHost*2 {
+		tr.MaxIdleConns = max(256, np.MaxIdleConnsPerHost*2)
+	}
 	tr.IdleConnTimeout = 60 * time.Second
 	return &Client{
 		p:     np,

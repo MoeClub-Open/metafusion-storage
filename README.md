@@ -183,6 +183,9 @@ JWKS 拉取**刻意不走**这套执行器：公钥拉取自带 10 分钟缓存�
 | `STORAGE_UPLOAD_LEASE_MINUTES` | 跟随预签名有效期 | 单次上传租约（分钟）：`initiate` 落定、续传刷新；`0`/未配置即跟随 `STORAGE_PRESIGN_TTL_MINUTES` |
 | `STORAGE_USER_QUOTA_MB` / `STORAGE_SITE_QUOTA_MB` | `0` | 容量预算（MB）：complete 计真实字节，pending 计声明大小；`0` 为不限制；超限 `initiate` 回 `413 quota_exceeded` |
 | `STORAGE_USER_CONCURRENT_UPLOADS` / `STORAGE_SITE_CONCURRENT_UPLOADS` | `0` | 并发预算（进行中的 pending 数）：`0` 为不限制；超限回 `429 too_many_uploads`；只拦新建占位，不拦续传收尾 |
+| `STORAGE_RATE_LIMIT_READ_RPM` / `STORAGE_RATE_LIMIT_WRITE_RPM` | `180` | 读、写 API 进程内每分钟限流额度；`0` 为不限制；admin 组跳过业务计数 |
+| `STORAGE_DB_MAX_OPEN_CONNS` / `STORAGE_DB_MAX_IDLE_CONNS` | `32` / `16` | 存储数据库连接池上限（1–256）与最大空闲连接数（0–MaxOpen） |
+| `STORAGE_UPSTREAM_MAX_IDLE_CONNS_PER_HOST` / `STORAGE_S3_MAX_IDLE_CONNS_PER_HOST` | `64` / `128` | 出站上游（catalog/auth）与对象存储（S3）单主机最大空闲连接数 |
 | `STORAGE_ORPHAN_RETENTION_DAYS` | `7` | 孤儿对象保留期（天）：无引用的键首次发现超过该天数才搬隔离区；隔离不等于删除 |
 | `STORAGE_UNBOUND_RETENTION_DAYS` | `7` | complete 资产最后解绑后的保留期（天）；重新绑定取消回收，从未绑定的资产在完成时开始计时 |
 | `STORAGE_S3_SKIP_BUCKET_ENSURE` | `false` | 置 `true` 跳过启动建桶检查，用仅目标桶数据操作的服务凭据（最小权限）；桶由运维身份事先建好 |
