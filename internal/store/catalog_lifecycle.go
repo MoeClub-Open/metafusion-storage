@@ -175,7 +175,11 @@ func (s *Store) ApplyCatalogLifecycle(ctx context.Context, state CatalogLifecycl
 	// Lock assets in deterministic order, sharing Bind/GC's row boundary. A
 	// last-reference deletion cannot race completed-asset reclamation.
 	rows, err = tx.QueryContext(ctx, `SELECT a.id FROM storage.assets a
-		WHERE a.id=ANY($2::uuid[]) OR EXISTS(SELECT 1 FROM storage.bindings b WHERE b.asset_id=a.id AND b.target_entity_id=ANY($1::uuid[]))
+		WHERE a.id IN (
+			SELECT unnest($2::uuid[])
+			UNION
+			SELECT b.asset_id FROM storage.bindings b WHERE b.target_entity_id=ANY($1::uuid[])
+		)
 		ORDER BY a.id FOR UPDATE OF a`, pq.Array(ids), pq.Array(state.CoverAssetIDs))
 	if err != nil {
 		return err
